@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,7 +15,7 @@ import (
 func handleClient(conn net.Conn, clientID int) {
 	defer conn.Close()
 
-	fmt.Printf("Client %d connected from %s\n", clientID, conn.RemoteAddr())
+	log.Printf("Client %d connected from %s\n", clientID, conn.RemoteAddr())
 
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
@@ -24,14 +25,14 @@ func handleClient(conn net.Conn, clientID int) {
 		message, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				fmt.Printf("Client %d disconnected\n", clientID)
+				log.Printf("Client %d disconnected\n", clientID)
 			} else {
 				log.Printf("Error reading from client %d: %v\n", clientID, err)
 			}
 			return
 		}
 
-		fmt.Printf("Received from client %d: %s", clientID, message)
+		log.Printf("Received from client %d: %s", clientID, message)
 
 		// Echo 回客户端
 		response := fmt.Sprintf("Echo (from client %d): %s", clientID, message)
@@ -42,6 +43,29 @@ func handleClient(conn net.Conn, clientID int) {
 		}
 		writer.Flush()
 	}
+}
+
+// returns a channel that can only be read from (not written to)
+func connectionSpawner(listener net.Listener) <-chan net.Conn {
+	connCh := make(chan net.Conn)
+
+	go func() {
+		defer close(connCh)
+
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				if !errors.Is(err, net.ErrClosed) {
+					log.Printf("Error accepting connection: %v", err)
+				}
+				log.Println("Exitting connection spawner...")
+				return
+			}
+			connCh <- conn
+		}
+	}()
+
+	return connCh
 }
 
 func main() {
@@ -56,37 +80,24 @@ func main() {
 	}
 	defer listener.Close()
 
-	// 设置 socket 文件权限
-	if err := os.Chmod(socketPath, 0666); err != nil {
-		log.Printf("Warning: could not set socket permissions: %v", err)
-	}
+	log.Printf("Server listening on %s\n", socketPath)
 
-	fmt.Printf("Server listening on %s\n", socketPath)
-
-	// 处理信号，优雅关闭
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		fmt.Println("\nShutting down server...")
-		listener.Close()
-		os.Remove(socketPath)
-		os.Exit(0)
-	}()
 
 	clientCounter := 0
+	connCh := connectionSpawner(listener)
 
 	for {
-		// 接受新连接
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Error accepting connection: %v", err)
-			continue
+		select {
+		case sig := <-sigCh:
+			log.Printf("Received signal: %s", sig.String())
+			log.Println("\nShutting down server...")
+			return
+		case cliConn := <-connCh:
+			log.Printf("Accepted connection, client id: %d", clientCounter)
+			clientCounter++
+			go handleClient(cliConn, clientCounter)
 		}
-		log.Printf("Accepted connection from %s", conn.RemoteAddr())
-
-		clientCounter++
-		// 为每个客户端启动单独的 goroutine
-		go handleClient(conn, clientCounter)
 	}
 }
