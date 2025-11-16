@@ -1,6 +1,7 @@
 package simpleping
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
@@ -212,7 +213,7 @@ func NewSimpleRemotePinger(remoteEndpoint string, cfg *PingConfiguration) (*Simp
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse remote endpoint: %w", err)
 	}
-	
+
 	urlQuery := encodeURLQueryForSimpleRemotePinger(cfg)
 	parsedURL.RawQuery = urlQuery.Encode()
 	return &SimpleRemotePinger{
@@ -221,22 +222,56 @@ func NewSimpleRemotePinger(remoteEndpoint string, cfg *PingConfiguration) (*Simp
 }
 
 func (srPinger *SimpleRemotePinger) Ping(ctx context.Context) <-chan pkgpinger.PingEvent {
-	
+
 	evChan := make(chan pkgpinger.PingEvent)
 
 	go func() {
 		defer close(evChan)
-		resp, err :=http.Get(srPinger.fullURL.String())
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srPinger.fullURL.String(), nil)
 		if err != nil {
 			evChan <- pkgpinger.PingEvent{
-				Type: pkgpinger.PingEventTypeError,
+				Type:  pkgpinger.PingEventTypeError,
+				Error: err,
+			}
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			evChan <- pkgpinger.PingEvent{
+				Type:  pkgpinger.PingEventTypeError,
 				Error: err,
 			}
 			return
 		}
 		defer resp.Body.Close()
-		decoder := json.NewDecoder(resp.Body)
-		
+		if resp.StatusCode != http.StatusOK {
+			evChan <- pkgpinger.PingEvent{
+				Type:  pkgpinger.PingEventTypeError,
+				Error: fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+			}
+			return
+		}
+
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			var ev pkgpinger.PingEvent
+			if err := json.Unmarshal(line, &ev); err != nil {
+				evChan <- pkgpinger.PingEvent{
+					Type:  pkgpinger.PingEventTypeError,
+					Error: fmt.Errorf("failed to decode event line: %w", err),
+				}
+				continue
+			}
+			evChan <- ev
+		}
+		if err := scanner.Err(); err != nil {
+			evChan <- pkgpinger.PingEvent{
+				Type:  pkgpinger.PingEventTypeError,
+				Error: err,
+			}
+			return
+		}
 	}()
 
 	return evChan
