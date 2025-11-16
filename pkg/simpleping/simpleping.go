@@ -185,8 +185,6 @@ func startPinging(cfg *PingConfiguration) <-chan pkgpinger.PingEvent {
 		if err != nil {
 			log.Printf("Failed to run pinger: %v", err)
 		}
-
-		log.Println("Pinging finished")
 	}()
 
 	return eventCh
