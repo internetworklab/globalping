@@ -18,8 +18,16 @@ import {
   DialogActions,
   IconButton,
   Tooltip,
+  TableContainer,
 } from "@mui/material";
-import { CSSProperties, Fragment, useEffect, useMemo, useState } from "react";
+import {
+  CSSProperties,
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import CloseIcon from "@mui/icons-material/CloseOutlined";
 
 type PingSample = {
@@ -52,12 +60,9 @@ const fakeTargets = [
   "223.5.5.5",
 ];
 
-function PingResultDisplay(props: {
-  resultStream: ReadableStream<PingSample>;
-  sources: string[];
-  targets: string[];
-}) {
-  const { sources, targets, resultStream } = props;
+function PingResultDisplay(props: { pendingTask: PendingTask }) {
+  const { pendingTask } = props;
+  const { sources, targets } = pendingTask;
 
   const [latencyMap, setLatencyMap] = useState<
     Record<string, Record<string, number>>
@@ -83,92 +88,79 @@ function PingResultDisplay(props: {
   };
 
   useEffect(() => {
+    const resultStream = generateFakePingSampleStream(sources, targets);
     const reader = resultStream.getReader();
-    let isActive = true;
-
-    // Recursive function to continuously read from the stream
-    const readNext = async () => {
-      try {
-        while (isActive) {
-          const { done, value } = await reader.read();
-
-          if (done) {
-            console.log("[dbg] stream ended");
-            break;
-          }
-
-          if (!isActive) {
-            break;
-          }
-
-          const sample = value as PingSample;
-          const sampleFrom = sample.from;
-          const sampleTarget = sample.target;
-          const sampleLatency = sample.latencyMs;
-
-          setLatencyMap((prev) => ({
-            ...prev,
-            [sampleTarget]: {
-              ...(prev[sampleTarget] || {}),
-              [sampleFrom]: sampleLatency,
-            },
-          }));
-        }
-      } catch (error) {
-        if (isActive) {
-          console.error("[dbg] error reading stream:", error);
-        }
-      } finally {
-        // Release the reader lock
-        reader.releaseLock();
+    const readNext = (props: {
+      done: boolean;
+      value: PingSample | undefined | null;
+    }) => {
+      if (props.done) {
+        return;
       }
+
+      if (props.value !== undefined && props.value !== null) {
+        const sample = props.value;
+        const sampleFrom = sample.from;
+        const sampleTarget = sample.target;
+        const sampleLatency = sample.latencyMs;
+
+        setLatencyMap((prev) => ({
+          ...prev,
+          [sampleTarget]: {
+            ...(prev[sampleTarget] || {}),
+            [sampleFrom]: sampleLatency,
+          },
+        }));
+      }
+
+      reader.read().then(readNext);
     };
 
-    // Start reading
-    readNext();
+    reader.read().then(readNext);
 
-    // Cleanup function: unsubscribe from the stream
     return () => {
-      isActive = false;
-      reader.cancel().catch((error) => {
-        // Ignore cancellation errors
-        console.debug("[dbg] cancellation error (expected):", error);
-      });
+      reader.cancel();
     };
-  }, [resultStream]);
+  });
 
   return (
     <Fragment>
-      <Table>
-        <TableHead>
-          <TableRow>
-            <TableCell>Target</TableCell>
-            {sources.map((source) => (
-              <TableCell key={source}>{source}</TableCell>
-            ))}
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {targets.map((target) => (
-            <TableRow key={target}>
-              <TableCell>{target}</TableCell>
-              {sources.map((source) => {
-                const latency = getLatency(source, target);
-                return (
-                  <TableCell
-                    key={source}
-                    sx={{ color: getLatencyColor(latency), fontWeight: 500 }}
-                  >
-                    {latency !== null && latency !== undefined
-                      ? `${latency} ms`
-                      : "—"}
-                  </TableCell>
-                );
-              })}
+      <TableContainer sx={{ maxWidth: "100%", overflowX: "auto" }}>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell>Target</TableCell>
+              {sources.map((source) => (
+                <TableCell key={source}>{source}</TableCell>
+              ))}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHead>
+          <TableBody>
+            {targets.map((target) => (
+              <TableRow key={target}>
+                <TableCell>{target}</TableCell>
+                {sources.map((source) => {
+                  const latency = getLatency(source, target);
+                  return (
+                    <TableCell
+                      key={source}
+                      sx={{
+                        color: getLatencyColor(latency),
+                        fontWeight: 500,
+                        minWidth: 100,
+                      }}
+                    >
+                      {latency !== null && latency !== undefined
+                        ? `${latency} ms`
+                        : "—"}
+                    </TableCell>
+                  );
+                })}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
     </Fragment>
   );
 }
@@ -214,7 +206,11 @@ function generateFakePingSampleStream(
 
   return new ReadableStream<PingSample>({
     start(controller) {
+      console.log("[dbg] start stream", sources, targets);
+
       intervalId = setInterval(() => {
+        console.log("[dbg] interval invoked");
+
         // Generate all combinations of sources × targets
         for (const source of sources) {
           for (const target of targets) {
@@ -226,6 +222,8 @@ function generateFakePingSampleStream(
               target: target,
               latencyMs: latencyMs,
             };
+
+            console.log("[dbg] enqueueing sample:", sample);
 
             controller.enqueue(sample);
           }
@@ -246,7 +244,6 @@ type PendingTask = {
   sources: string[];
   targets: string[];
   taskId: string;
-  stream?: ReadableStream<PingSample>;
 };
 function TaskConfirmDialog(props: {
   pendingTask: PendingTask;
@@ -298,8 +295,6 @@ function getSortedOnGoingTasks(onGoingTasks: PendingTask[]): PendingTask[] {
 }
 
 export default function Home() {
-  const pingSamples: PingSample[] = [];
-
   const [pendingTask, setPendingTask] = useState<PendingTask>(() => {
     return {
       sources: [],
@@ -313,17 +308,7 @@ export default function Home() {
   const [sourcesInput, setSourcesInput] = useState<string>("");
   const [targetsInput, setTargetsInput] = useState<string>("");
 
-  const fakeTasks = useMemo(() => {
-    return [
-      {
-        sources: fakeSources,
-        targets: fakeTargets,
-        taskId: "0",
-        stream: generateFakePingSampleStream(fakeSources, fakeTargets),
-      },
-    ] as PendingTask[];
-  }, []);
-  const [onGoingTasks, setOnGoingTasks] = useState<PendingTask[]>(fakeTasks);
+  const [onGoingTasks, setOnGoingTasks] = useState<PendingTask[]>([]);
 
   let containerStyles: CSSProperties[] = [
     {
@@ -369,10 +354,6 @@ export default function Home() {
                     sources: srcs,
                     targets: tgts,
                     taskId: onGoingTasks.length.toString(),
-                    stream:
-                      srcs.length + tgts.length > 0
-                        ? generateFakePingSampleStream(srcs, tgts)
-                        : undefined,
                   });
                   setOpenTaskConfirmDialog(true);
                 }}
@@ -416,15 +397,7 @@ export default function Home() {
                   }}
                 />
               </Box>
-              {task.stream ? (
-                <PingResultDisplay
-                  resultStream={task.stream}
-                  sources={task.sources}
-                  targets={task.targets}
-                />
-              ) : (
-                <Typography>Task is pending</Typography>
-              )}
+              <PingResultDisplay pendingTask={task} />
             </CardContent>
           </Card>
         ))}
@@ -438,6 +411,8 @@ export default function Home() {
         onConfirm={() => {
           setOnGoingTasks([...onGoingTasks, pendingTask]);
           setOpenTaskConfirmDialog(false);
+          setSourcesInput("");
+          setTargetsInput("");
         }}
       />
     </Box>
