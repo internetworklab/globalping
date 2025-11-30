@@ -230,7 +230,7 @@ function generateFakePingSampleStream(
             controller.enqueue(sample);
           }
         }
-      }, 200); // Emit every 1 second
+      }, 150); // Emit every 1 second
     },
     cancel() {
       // Clear the interval when the stream is cancelled
@@ -287,6 +287,14 @@ function TaskConfirmDialog(props: {
       </Dialog>
     </Fragment>
   );
+}
+
+function getSortedOnGoingTasks(onGoingTasks: PendingTask[]): PendingTask[] {
+  const sortedTasks = [...onGoingTasks];
+  sortedTasks.sort((a, b) => {
+    return b.taskId.localeCompare(a.taskId);
+  });
+  return sortedTasks;
 }
 
 export default function Home() {
@@ -394,7 +402,7 @@ export default function Home() {
             </Box>
           </CardContent>
         </Card>
-        {onGoingTasks.map((task) => (
+        {getSortedOnGoingTasks(onGoingTasks).map((task) => (
           <Card key={task.taskId}>
             <CardContent>
               <Box sx={{ display: "flex", justifyContent: "space-between" }}>
