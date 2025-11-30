@@ -23,6 +23,7 @@ var path = flag.String("path", "/ws", "websocket path")
 var nodeName = flag.String("node-name", "agent-1", "node name")
 var logEchoReplies = flag.Bool("log-echo-replies", false, "log echo replies")
 var rabbitMQBrokerURL = flag.String("rabbitmq-broker-url", "amqp://localhost:5672/", "RabbitMQ broker URL")
+var reconnectAtDisconnect = flag.Bool("reconnect-at-disconnect", false, "reconnect at disconnect")
 
 func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pkgrbmqrpc.TaskUpdate) {
 
@@ -66,6 +67,7 @@ func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pk
 
 }
 
+// todo: implement reconnect at disconnect
 func main() {
 	flag.Parse()
 	sigs := make(chan os.Signal, 1)
