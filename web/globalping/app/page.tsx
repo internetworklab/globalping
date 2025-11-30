@@ -22,7 +22,6 @@ type PingSample = {
   latencyMs: number;
 };
 
-
 const fakeSources = [
   "lax1",
   "vie1",
@@ -45,89 +44,156 @@ const fakeTargets = [
   "223.5.5.5",
 ];
 
-function PingResultDisplay(props:{ resultStream: ReadableStream<PingSample>, sources: string[], targets: string[] }) {
-  
-
+function PingResultDisplay(props: {
+  resultStream: ReadableStream<PingSample>;
+  sources: string[];
+  targets: string[];
+}) {
   const { sources, targets, resultStream } = props;
-  
 
-  const [latencyMap, setLatencyMap] = useState<Record<string, Record<string, number>>>({});
-  const getLatency = (source: string, target: string): number | undefined | null => {
+  const [latencyMap, setLatencyMap] = useState<
+    Record<string, Record<string, number>>
+  >({});
+  const getLatency = (
+    source: string,
+    target: string
+  ): number | undefined | null => {
     return latencyMap[target]?.[source];
-  }
+  };
 
   useEffect(() => {
-    const reader = resultStream.getReader()
+    const reader = resultStream.getReader();
+    let isActive = true;
 
-    reader.read().then(({done, value}) => {
-      if (done) {
-        console.log('[dbg] done, value:', value)
-        return
-      }
+    // Recursive function to continuously read from the stream
+    const readNext = async () => {
+      try {
+        while (isActive) {
+          const { done, value } = await reader.read();
 
-      const sample = value as PingSample
-      const sampleFrom = sample.from
-      const sampleTarget = sample.target
-      const sampleLatency = sample.latencyMs
+          if (done) {
+            console.log("[dbg] stream ended");
+            break;
+          }
 
-      setLatencyMap((prev) => ({
-        ...prev,
-        [sampleFrom]: {
-          ...(prev[sampleFrom] || {}),
-          [sampleTarget]: sampleLatency,
+          if (!isActive) {
+            break;
+          }
+
+          const sample = value as PingSample;
+          const sampleFrom = sample.from;
+          const sampleTarget = sample.target;
+          const sampleLatency = sample.latencyMs;
+
+          setLatencyMap((prev) => ({
+            ...prev,
+            [sampleTarget]: {
+              ...(prev[sampleTarget] || {}),
+              [sampleFrom]: sampleLatency,
+            },
+          }));
         }
-      }))
+      } catch (error) {
+        if (isActive) {
+          console.error("[dbg] error reading stream:", error);
+        }
+      } finally {
+        // Release the reader lock
+        reader.releaseLock();
+      }
+    };
 
-    })
+    // Start reading
+    readNext();
 
+    // Cleanup function: unsubscribe from the stream
     return () => {
-      reader.cancel()
-    }
-  })
+      isActive = false;
+      reader.cancel().catch((error) => {
+        // Ignore cancellation errors
+        console.debug("[dbg] cancellation error (expected):", error);
+      });
+    };
+  }, [resultStream]);
 
-return <Fragment>
-   <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Target</TableCell>
-                {sources.map((source) => (
-                  <TableCell key={source}>{source}</TableCell>
-                ))}
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {targets.map((target) => (
-                <TableRow key={target}>
-                  <TableCell>{target}</TableCell>
-                  {sources.map((source) => {
-                    const latency = getLatency(source, target);
-                    return (
-                      <TableCell key={source}>
-                        {latency !== null ? `${latency} ms` : "—"}
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-</Fragment>
+  return (
+    <Fragment>
+      <Table>
+        <TableHead>
+          <TableRow>
+            <TableCell>Target</TableCell>
+            {sources.map((source) => (
+              <TableCell key={source}>{source}</TableCell>
+            ))}
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {targets.map((target) => (
+            <TableRow key={target}>
+              <TableCell>{target}</TableCell>
+              {sources.map((source) => {
+                const latency = getLatency(source, target);
+                return (
+                  <TableCell key={source}>
+                    {latency !== null ? `${latency} ms` : "—"}
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Fragment>
+  );
 }
 
-function generateFakePingSampleStream(sources: string[], targets: string[]): ReadableStream<PingSample> {
+function generateFakePingSampleStream(
+  sources: string[],
+  targets: string[]
+): ReadableStream<PingSample> {
+  let intervalId: ReturnType<typeof setInterval> | null = null;
 
+  return new ReadableStream<PingSample>({
+    start(controller) {
+      intervalId = setInterval(() => {
+        // Generate all combinations of sources × targets
+        for (const source of sources) {
+          for (const target of targets) {
+            // Generate a fake latency between 10ms and 300ms
+            const latencyMs = Math.floor(Math.random() * 290) + 10;
+
+            const sample: PingSample = {
+              from: source,
+              target: target,
+              latencyMs: latencyMs,
+            };
+
+            controller.enqueue(sample);
+          }
+        }
+      }, 200); // Emit every 1 second
+    },
+    cancel() {
+      // Clear the interval when the stream is cancelled
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    },
+  });
 }
 
 export default function Home() {
-  
-
   const pingSamples: PingSample[] = [];
 
   const [sources, setSources] = useState<string[]>(fakeSources);
   const [targets, setTargets] = useState<string[]>(fakeTargets);
   const [target, setTarget] = useState<string>("");
 
-  const sampleStream = useMemo(() => generateFakePingSampleStream(sources, targets), [sources, targets]);
+  const sampleStream = useMemo(
+    () => generateFakePingSampleStream(sources, targets),
+    [sources, targets]
+  );
 
   return (
     <Box sx={{ padding: 2, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -147,7 +213,11 @@ export default function Home() {
       </Card>
       <Card>
         <CardContent>
-         <PingResultDisplay resultStream={sampleStream} sources={sources} targets={targets} />
+          <PingResultDisplay
+            resultStream={sampleStream}
+            sources={sources}
+            targets={targets}
+          />
         </CardContent>
       </Card>
     </Box>
