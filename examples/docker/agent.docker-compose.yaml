@@ -1,0 +1,22 @@
+networks:
+  global-ping:
+    enable_ipv6: true
+    ipam:
+      driver: default
+      config:
+        - subnet: "${SUBNET_OVERRIDE}"
+services:
+  agent:
+    container_name: global-pinger-proxy
+    pull_policy: always
+    image: ghcr.io/internetworklab/globalping:latest
+    networks:
+      - global-ping
+    volumes:
+      - "./container-resolv.conf:/etc/resolv.conf:ro"
+    command:
+      - "/usr/local/bin/global-pinger-proxy"
+      - "-addr=vie1.exploro.one:8080"
+      - "-path=/ws"
+      - "-node-name=${NODE_NAME}"
+      - "-rabbitmq-broker-url=${RABBIT_MQ_BROKER_URL}"

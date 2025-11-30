@@ -1,0 +1,25 @@
+networks:
+  global-ping-hub: {}
+services:
+  broker:
+    container_name: rbmq
+    hostname: rbmq
+    image: rabbitmq:3
+    networks:
+      - global-ping-hub
+    ports:
+      - "5672:5672"
+    stdin_open: true
+    tty: true
+  hub:
+    container_name: global-pinger-hub
+    pull_policy: always
+    image: ghcr.io/internetworklab/globalping:latest
+    networks:
+      - global-ping-hub
+    ports:
+      - "8080:8080"
+    command:
+      - "/usr/local/bin/global-pinger-hub"
+      - "-addr=0.0.0.0:8080"
+      - "-rabbitmq-broker-url=${RABBIT_MQ_BROKER_URL}"
