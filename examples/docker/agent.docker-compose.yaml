@@ -20,3 +20,4 @@ services:
       - "-path=/ws"
       - "-node-name=${NODE_NAME}"
       - "-rabbitmq-broker-url=${RABBIT_MQ_BROKER_URL}"
+    mem_limit: 256m
