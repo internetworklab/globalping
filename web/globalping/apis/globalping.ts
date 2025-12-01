@@ -194,22 +194,37 @@ function pingSampleFromEvent(event: PingEvent): PingSample | undefined {
   }
 }
 
+function convertRawStreamToPingSampleStream(
+  rawStream: ReadableStream<any> | undefined | null
+): ReadableStream<PingSample> | undefined | null {
+  return;
+}
+
 export function generatePingSampleStream(
   sources: string[],
   targets: string[],
   count: number,
-  intervalMs: number
+  intervalMs: number,
+  timeoutSecs: number
 ): ReadableStream<PingSample> {
   const payload = {
     from: sources,
     targets: targets,
     count: count,
     interval: intervalMs,
+    timeout: timeoutSecs,
   };
   const payloadJson = JSON.stringify(payload);
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
+
+  let controlscope: {
+    rawStream?: ReadableStream<Uint8Array<ArrayBuffer>> | null;
+    sampleStream?: ReadableStream<PingSample> | null;
+    reader?: ReadableStreamDefaultReader<PingSample> | null;
+    stopped?: boolean;
+  } = {};
 
   return new ReadableStream<PingSample>({
     start(controller) {
@@ -219,24 +234,29 @@ export function generatePingSampleStream(
         body: payloadJson,
       })
         .then((res) => res.body)
-        .then((bodyStream) => bodyStream?.pipeThrough(new TextDecoderStream()))
-        .then((maybeTextStream) =>
-          maybeTextStream?.pipeThrough(new LineTokenizer())
-        )
-        .then((maybeLineStream) =>
-          maybeLineStream?.pipeThrough(new JSONLineDecoder())
-        )
-        .then((maybeObjectStream) =>
-          maybeObjectStream?.pipeThrough(new PingEventAdapter())
-        )
+        .then((rawStream) => {
+          controlscope.rawStream = rawStream;
+          return rawStream
+            ?.pipeThrough(new TextDecoderStream())
+            .pipeThrough(new LineTokenizer())
+            .pipeThrough(new JSONLineDecoder())
+            .pipeThrough(new PingEventAdapter());
+        })
         .then((maybeSampleStream) => {
+          controlscope.sampleStream = maybeSampleStream;
           if (maybeSampleStream) {
             const reader = maybeSampleStream.getReader();
+            controlscope.reader = reader;
             function push() {
               reader.read().then(({ done, value }) => {
                 if (done) {
                   return;
                 }
+                if (value && !controlscope.stopped) {
+                  console.log("[dbg] enqueueing sample:", value);
+                  controller.enqueue(value);
+                }
+                push();
               });
             }
             push();
@@ -245,6 +265,15 @@ export function generatePingSampleStream(
     },
     cancel() {
       console.log("[dbg] cancel stream", sources, targets);
+      controlscope.stopped = true;
+      controlscope.reader
+        ?.cancel()
+        .then(() => {
+          console.log("[dbg] reader cancelled");
+        })
+        .catch((err) => {
+          console.error("[dbg] failed to cancel reader:", err);
+        });
     },
   });
 }

@@ -81,7 +81,13 @@ function PingResultDisplay(props: { pendingTask: PendingTask }) {
 
   useEffect(() => {
     // const resultStream = generateFakePingSampleStream(sources, targets);
-    const resultStream = generatePingSampleStream(sources, targets, 1000, 500);
+    const resultStream = generatePingSampleStream(
+      sources,
+      targets,
+      1000,
+      500,
+      60
+    );
     const reader = resultStream.getReader();
     const readNext = (props: {
       done: boolean;
