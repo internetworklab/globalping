@@ -23,14 +23,11 @@ import {
 import { CSSProperties, Fragment, useEffect, useState } from "react";
 import CloseIcon from "@mui/icons-material/CloseOutlined";
 import { SourcesSelector } from "@/components/sourceselector";
-
-type PingSample = {
-  from: string;
-  target: string;
-
-  // in the unit of milliseconds
-  latencyMs: number;
-};
+import {
+  getCurrentPingers,
+  PingSample,
+  generateFakePingSampleStream,
+} from "@/apis/globalping";
 
 const fakeSources = [
   "lax1",
@@ -192,48 +189,6 @@ function TaskCloseIconButton(props: {
   );
 }
 
-function generateFakePingSampleStream(
-  sources: string[],
-  targets: string[]
-): ReadableStream<PingSample> {
-  let intervalId: ReturnType<typeof setInterval> | null = null;
-
-  return new ReadableStream<PingSample>({
-    start(controller) {
-      console.log("[dbg] start stream", sources, targets);
-
-      intervalId = setInterval(() => {
-        console.log("[dbg] interval invoked");
-
-        // Generate all combinations of sources × targets
-        for (const source of sources) {
-          for (const target of targets) {
-            // Generate a fake latency between 10ms and 300ms
-            const latencyMs = Math.floor(Math.random() * 290) + 10;
-
-            const sample: PingSample = {
-              from: source,
-              target: target,
-              latencyMs: latencyMs,
-            };
-
-            console.log("[dbg] enqueueing sample:", sample);
-
-            controller.enqueue(sample);
-          }
-        }
-      }, 150); // Emit every 1 second
-    },
-    cancel() {
-      // Clear the interval when the stream is cancelled
-      if (intervalId !== null) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    },
-  });
-}
-
 type PendingTask = {
   sources: string[];
   targets: string[];
@@ -365,9 +320,10 @@ export default function Home() {
                   .filter((s) => s.length > 0)}
                 onChange={(value) => setSourcesInput(value.join(","))}
                 getOptions={() => {
-                  return new Promise((res) => {
-                    window.setTimeout(() => res(fakeSources), 2000);
-                  });
+                  return getCurrentPingers();
+                  // return new Promise((res) => {
+                  //   window.setTimeout(() => res(fakeSources), 2000);
+                  // });
                 }}
               />
             </Box>

@@ -25,6 +25,9 @@ type PktRepresentation struct {
 	TTL    int    `json:"ttl"`
 	ID     int    `json:"id"`
 	Dup    bool   `json:"dup"`
+
+	// Target is the target hostname in un-resolved form
+	Target string `json:"target"`
 }
 
 func (pktrepr *PktRepresentation) String() string {
@@ -36,7 +39,7 @@ func (pktrepr *PktRepresentation) String() string {
 	return string(j)
 }
 
-func NewPktRepresentation(pkt *probing.Packet, dup bool) *PktRepresentation {
+func NewPktRepresentation(pkt *probing.Packet, dup bool, dest string) *PktRepresentation {
 
 	r := PktRepresentation{
 		Rtt:    uint64(pkt.Rtt.Milliseconds()),
@@ -46,6 +49,7 @@ func NewPktRepresentation(pkt *probing.Packet, dup bool) *PktRepresentation {
 		TTL:    pkt.TTL,
 		ID:     pkt.ID,
 		Dup:    dup,
+		Target: dest,
 	}
 
 	return &r
@@ -67,6 +71,9 @@ type PingStatsRepresentation struct {
 	// IPAddr is the address of the host being pinged.
 	IPAddr string `json:"ip_addr"`
 
+	// Target is the target hostname in un-resolved form
+	Target string `json:"target"`
+
 	// Rtts is all of the round-trip times sent via this pinger.
 	Rtts []int `json:"rtts"`
 
@@ -87,13 +94,14 @@ type PingStatsRepresentation struct {
 	StdDevRtt uint64 `json:"std_dev_rtt"`
 }
 
-func NewPingStatsRepresentation(stats *probing.Statistics) *PingStatsRepresentation {
+func NewPingStatsRepresentation(stats *probing.Statistics, dest string) *PingStatsRepresentation {
 	r := PingStatsRepresentation{
 		PacketsRecv:           stats.PacketsRecv,
 		PacketsSent:           stats.PacketsSent,
 		PacketsRecvDuplicates: stats.PacketsRecvDuplicates,
 		PacketLoss:            stats.PacketLoss,
 		IPAddr:                stats.IPAddr.String(),
+		Target:                dest,
 	}
 	rtts := make([]int, 0)
 	for _, rtt := range stats.Rtts {
@@ -165,7 +173,7 @@ func startPinging(cfg *PingConfiguration) <-chan pkgpinger.PingEvent {
 		pinger.OnRecv = func(pkt *probing.Packet) {
 			ev := pkgpinger.PingEvent{
 				Type: pkgpinger.PingEventTypePktRecv,
-				Data: NewPktRepresentation(pkt, false),
+				Data: NewPktRepresentation(pkt, false, destination),
 			}
 			eventCh <- ev
 		}
@@ -173,7 +181,7 @@ func startPinging(cfg *PingConfiguration) <-chan pkgpinger.PingEvent {
 		pinger.OnDuplicateRecv = func(pkt *probing.Packet) {
 			ev := pkgpinger.PingEvent{
 				Type: pkgpinger.PingEventTypePktDupRecv,
-				Data: NewPktRepresentation(pkt, true),
+				Data: NewPktRepresentation(pkt, true, destination),
 			}
 			eventCh <- ev
 		}
@@ -181,7 +189,7 @@ func startPinging(cfg *PingConfiguration) <-chan pkgpinger.PingEvent {
 		pinger.OnFinish = func(stats *probing.Statistics) {
 			ev := pkgpinger.PingEvent{
 				Type: pkgpinger.PingEventTypePingStats,
-				Data: NewPingStatsRepresentation(stats),
+				Data: NewPingStatsRepresentation(stats, destination),
 			}
 			eventCh <- ev
 		}
