@@ -20,7 +20,7 @@ import {
   Tooltip,
   TableContainer,
 } from "@mui/material";
-import { CSSProperties, Fragment, useEffect, useState } from "react";
+import { CSSProperties, Fragment, useEffect, useRef, useState } from "react";
 import CloseIcon from "@mui/icons-material/CloseOutlined";
 import { SourcesSelector } from "@/components/sourceselector";
 import {
@@ -29,6 +29,8 @@ import {
   generateFakePingSampleStream,
   generatePingSampleStream,
 } from "@/apis/globalping";
+import PauseIcon from "@mui/icons-material/Pause";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 
 const fakeSources = [
   "lax1",
@@ -52,8 +54,11 @@ const fakeTargets = [
   "223.5.5.5",
 ];
 
-function PingResultDisplay(props: { pendingTask: PendingTask }) {
-  const { pendingTask } = props;
+function PingResultDisplay(props: {
+  pendingTask: PendingTask;
+  onDeleted: () => void;
+}) {
+  const { pendingTask, onDeleted } = props;
   const { sources, targets } = pendingTask;
 
   const [latencyMap, setLatencyMap] = useState<
@@ -79,15 +84,20 @@ function PingResultDisplay(props: { pendingTask: PendingTask }) {
     }
   };
 
-  useEffect(() => {
-    // const resultStream = generateFakePingSampleStream(sources, targets);
-    const resultStream = generatePingSampleStream(
-      sources,
-      targets,
-      1000,
-      500,
-      60
-    );
+  const [running, setRunning] = useState<boolean>(true);
+
+  function launchStream(): [
+    ReadableStream<PingSample>,
+    ReadableStreamDefaultReader<PingSample>
+  ] {
+    const resultStream = generateFakePingSampleStream(sources, targets);
+    // const resultStream = generatePingSampleStream(
+    //   sources,
+    //   targets,
+    //   1000,
+    //   500,
+    //   60
+    // );
     const reader = resultStream.getReader();
     const readNext = (props: {
       done: boolean;
@@ -116,14 +126,65 @@ function PingResultDisplay(props: { pendingTask: PendingTask }) {
     };
 
     reader.read().then(readNext);
+    return [resultStream, reader];
+  }
+
+  const readerRef = useRef<ReadableStreamDefaultReader<PingSample> | null>(
+    null
+  );
+
+  function cancelStream() {
+    if (readerRef.current) {
+      const reader = readerRef.current;
+      readerRef.current = null;
+      reader.cancel();
+    }
+  }
+
+  useEffect(() => {
+    if (running) {
+      const [_, reader] = launchStream();
+      readerRef.current = reader;
+    }
 
     return () => {
-      reader.cancel();
+      cancelStream();
     };
   });
 
   return (
     <Fragment>
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Typography variant="h6">Task #{pendingTask.taskId}</Typography>
+        <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+          <Tooltip title={running ? "Running" : "Stopped"}>
+            <IconButton
+              onClick={() => {
+                if (running) {
+                  cancelStream();
+                  setRunning(false);
+                } else {
+                  setRunning(true);
+                }
+              }}
+            >
+              {running ? <PauseIcon /> : <PlayArrowIcon />}
+            </IconButton>
+          </Tooltip>
+          <TaskCloseIconButton
+            taskId={pendingTask.taskId}
+            onConfirmedClosed={() => {
+              onDeleted();
+            }}
+          />
+        </Box>
+      </Box>
       <TableContainer sx={{ maxWidth: "100%", overflowX: "auto" }}>
         <Table>
           <TableHead>
@@ -350,18 +411,14 @@ export default function Home() {
         {getSortedOnGoingTasks(onGoingTasks).map((task) => (
           <Card key={task.taskId}>
             <CardContent>
-              <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                <Typography variant="h6">Task #{task.taskId}</Typography>
-                <TaskCloseIconButton
-                  taskId={task.taskId}
-                  onConfirmedClosed={() => {
-                    setOnGoingTasks(
-                      onGoingTasks.filter((t) => t.taskId !== task.taskId)
-                    );
-                  }}
-                />
-              </Box>
-              <PingResultDisplay pendingTask={task} />
+              <PingResultDisplay
+                pendingTask={task}
+                onDeleted={() => {
+                  setOnGoingTasks(
+                    onGoingTasks.filter((t) => t.taskId !== task.taskId)
+                  );
+                }}
+              />
             </CardContent>
           </Card>
         ))}
