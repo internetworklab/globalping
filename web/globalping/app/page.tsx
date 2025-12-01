@@ -19,17 +19,10 @@ import {
   IconButton,
   Tooltip,
   TableContainer,
-  Autocomplete,
 } from "@mui/material";
-import {
-  CSSProperties,
-  Fragment,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { CSSProperties, Fragment, useEffect, useState } from "react";
 import CloseIcon from "@mui/icons-material/CloseOutlined";
+import { SourcesSelector } from "@/components/sourceselector";
 
 type PingSample = {
   from: string;
@@ -295,6 +288,10 @@ function getSortedOnGoingTasks(onGoingTasks: PendingTask[]): PendingTask[] {
   return sortedTasks;
 }
 
+function dedup(arr: string[]): string[] {
+  return Array.from(new Set(arr));
+}
+
 export default function Home() {
   const [pendingTask, setPendingTask] = useState<PendingTask>(() => {
     return {
@@ -343,12 +340,10 @@ export default function Home() {
               <Typography variant="h6">GlobalPing</Typography>
               <Button
                 onClick={() => {
-                  const srcs = sourcesInput
-                    .split(",")
+                  const srcs = dedup(sourcesInput.split(","))
                     .map((s) => s.trim())
                     .filter((s) => s.length > 0);
-                  const tgts = targetsInput
-                    .split(",")
+                  const tgts = dedup(targetsInput.split(","))
                     .map((t) => t.trim())
                     .filter((t) => t.length > 0);
                   setPendingTask({
@@ -363,25 +358,17 @@ export default function Home() {
               </Button>
             </Box>
             <Box sx={{ marginTop: 2 }}>
-              <Autocomplete
-                fullWidth
+              <SourcesSelector
                 value={sourcesInput
                   .split(",")
                   .map((s) => s.trim())
                   .filter((s) => s.length > 0)}
-                onChange={(_, value) => setSourcesInput(value.join(","))}
-                multiple
-                options={fakeSources}
-                defaultValue={fakeSources}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    variant="standard"
-                    label="Sources"
-                    placeholder="Sources, separated by comma"
-                  />
-                )}
-                disableCloseOnSelect
+                onChange={(value) => setSourcesInput(value.join(","))}
+                getOptions={() => {
+                  return new Promise((res) => {
+                    window.setTimeout(() => res(fakeSources), 2000);
+                  });
+                }}
               />
             </Box>
             <Box sx={{ marginTop: 2 }}>
