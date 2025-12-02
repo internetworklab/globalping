@@ -241,7 +241,12 @@ func (it *ICMPTracker) tryMarkAsTimeout(ctx context.Context, seq int) error {
 			ent.ReceivedAt = append(ent.ReceivedAt, zeroTime)
 
 			go func(seq int) {
-				it.internTimeoutCh <- seq
+				select {
+				case it.internTimeoutCh <- seq:
+					return
+				case <-time.After(it.pktTimeout):
+					return
+				}
 			}(seq)
 		}
 		return nil
