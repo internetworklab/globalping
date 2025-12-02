@@ -40,16 +40,17 @@ type ServiceRequest struct {
 }
 
 type ICMPTracker struct {
-	id          int
-	initSeq     int
-	latestSeq   int
-	store       map[int]*ICMPTrackerEntry
-	serviceChan chan chan ServiceRequest
-	closeCh     chan interface{}
-	nrUnAck     int
-	nrMaxCount  *int
-	intv        time.Duration
-	pktTimeout  time.Duration
+	id              int
+	initSeq         int
+	latestSeq       int
+	store           map[int]*ICMPTrackerEntry
+	serviceChan     chan chan ServiceRequest
+	closeCh         chan interface{}
+	nrUnAck         int
+	nrMaxCount      *int
+	intv            time.Duration
+	pktTimeout      time.Duration
+	internTimeoutCh chan int
 }
 
 type ICMPTrackerConfig struct {
@@ -74,7 +75,7 @@ func NewICMPTracker(config *ICMPTrackerConfig) *ICMPTracker {
 	return it
 }
 
-func (it *ICMPTracker) Run(ctx context.Context) {
+func (it *ICMPTracker) doRun(ctx context.Context) {
 	it.closeCh = make(chan interface{})
 	defer close(it.serviceChan)
 
@@ -94,6 +95,22 @@ func (it *ICMPTracker) Run(ctx context.Context) {
 	}
 }
 
+// returns a read-only channel of timeout events
+// and this timeout chan must be consumed to avoid deadlock.
+func (it *ICMPTracker) Run(ctx context.Context) <-chan int {
+	go it.doRun(ctx)
+
+	timeoutCh := make(chan int)
+	go func() {
+		defer close(timeoutCh)
+		for seq := range it.internTimeoutCh {
+			timeoutCh <- seq
+		}
+	}()
+
+	return timeoutCh
+}
+
 func (it *ICMPTracker) MarkSent(seq int) error {
 	requestCh := <-it.serviceChan
 	defer close(requestCh)
@@ -109,7 +126,9 @@ func (it *ICMPTracker) MarkSent(seq int) error {
 
 		go func() {
 			<-ent.Timer.C
-			it.tryMarkAsTimeout(seq)
+			ctx, cancel := context.WithTimeout(context.TODO(), it.pktTimeout)
+			defer cancel()
+			it.tryMarkAsTimeout(ctx, seq)
 		}()
 
 		return nil
@@ -124,9 +143,7 @@ func (it *ICMPTracker) MarkSent(seq int) error {
 	return <-resultCh
 }
 
-func (it *ICMPTracker) tryMarkAsTimeout(seq int) error {
-	requestCh := <-it.serviceChan
-	defer close(requestCh)
+func (it *ICMPTracker) tryMarkAsTimeout(ctx context.Context, seq int) error {
 
 	fn := func(ctx context.Context) error {
 		if ent, ok := it.store[seq]; ok {
@@ -137,18 +154,28 @@ func (it *ICMPTracker) tryMarkAsTimeout(seq int) error {
 			it.nrUnAck--
 			var zeroTime time.Time
 			ent.ReceivedAt = append(ent.ReceivedAt, zeroTime)
+			it.internTimeoutCh <- seq
 		}
 		return nil
 	}
-
 	resultCh := make(chan error)
 
-	requestCh <- ServiceRequest{
-		Func:   fn,
-		Result: resultCh,
-	}
+	select {
+	case requestCh, ok := <-it.serviceChan:
+		if !ok {
+			// runner is closed
+			return nil
+		}
+		defer close(requestCh)
 
-	return <-resultCh
+		requestCh <- ServiceRequest{
+			Func:   fn,
+			Result: resultCh,
+		}
+		return <-resultCh
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (it *ICMPTracker) MarkReceived(seq int) error {
@@ -191,10 +218,6 @@ func (it *ICMPTracker) GetNrUnAck() int {
 	}
 	<-resultCh
 	return *nrUnAck
-}
-
-func (it *ICMPTracker) GetID() int {
-	return it.id
 }
 
 func (it *ICMPTracker) IterateSeq() int {
@@ -277,21 +300,18 @@ func (it *ICMPTracker) IsNotDone() bool {
 }
 
 func (it *ICMPTracker) Close() {
-	if it.closeCh == nil {
+	if it.closeCh == nil || it.internTimeoutCh == nil {
 		panic("ICMPTracker is not started yet")
 	}
 	close(it.closeCh)
+	close(it.internTimeoutCh)
 }
 
-func (it *ICMPTracker) IsRelevant(msg *icmp.Message) (*icmp.Echo, bool) {
-	icmpEcho, ok := msg.Body.(*icmp.Echo)
-	if ok {
-		if icmpEcho.ID == it.id {
-			return icmpEcho, true
-		}
-	}
-	return nil, false
+func (it *ICMPTracker) GetID() int {
+	return it.id
 }
+
+const standardMTU = 1500
 
 func main() {
 	if runtime.GOOS != "linux" {
@@ -307,37 +327,60 @@ func main() {
 
 	icmpID := os.Getpid() & 0xffff
 	maxCount := 10
+	pktTimeout := 3 * time.Second
 	icmpTrackerConfig := &ICMPTrackerConfig{
 		ID:            icmpID,
 		InitialSeq:    0,
 		MaxCount:      &maxCount,
-		PacketTimeout: 3 * time.Second,
+		PacketTimeout: pktTimeout,
 		Interval:      500 * time.Millisecond,
 	}
 	tracker := NewICMPTracker(icmpTrackerConfig)
 
+	ctx := context.TODO()
+	timeoutCh := tracker.Run(ctx)
+	go func() {
+		for seq := range timeoutCh {
+			log.Printf("timeout for seq: %v", seq)
+		}
+	}()
+	defer tracker.Close()
+
 	receiveCh := make(chan interface{})
 	go func() {
 		defer close(receiveCh)
-		stdandardMTU := 1500
+
 		for tracker.IsNotDone() || tracker.GetNrUnAck() > 0 {
-			log.Println("Receiving")
-			receivBuf := make([]byte, stdandardMTU)
+
+			if err := conn.SetReadDeadline(time.Now().Add(pktTimeout)); err != nil {
+				log.Fatalf("failed to set read deadline: %v", err)
+			}
+
+			receivBuf := make([]byte, standardMTU)
 			n, peer, err := conn.ReadFrom(receivBuf)
 			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					log.Printf("timeout reading from connection, skipping")
+					continue
+				}
+
 				log.Fatalf("failed to read from connection: %v", err)
 			}
+			log.Printf("read %d bytes from %v", n, peer.String())
 
 			receivMsg, err := icmp.ParseMessage(ipv4.ICMPTypeEchoReply.Protocol(), receivBuf[:n])
 			if err != nil {
 				log.Fatalf("failed to parse icmp message: %v", err)
 			}
 
-			if icmpEcho, ok := tracker.IsRelevant(receivMsg); ok {
-				log.Printf("received echo packet, type: %v, id: %v, seq: %v, code: %v, body length: %v, peer: %v", receivMsg.Type, icmpEcho.ID, icmpEcho.Seq, receivMsg.Code, receivMsg.Body.Len(int(receivMsg.Type.Protocol())), peer.String())
-				tracker.MarkReceived(icmpEcho.Seq)
+			if icmpEcho, ok := receivMsg.Body.(*icmp.Echo); ok {
+				if icmpEcho.ID == tracker.GetID() {
+					tracker.MarkReceived(icmpEcho.Seq)
+					log.Printf("id: %v, seq: %v", icmpEcho.ID, icmpEcho.Seq)
+				}
 			}
 		}
+
 	}()
 
 	for tracker.IsNotDone() {
