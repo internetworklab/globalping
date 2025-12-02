@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -72,18 +73,44 @@ type ICMPTrackerConfig struct {
 	Interval      time.Duration
 }
 
-func NewICMPTracker(config *ICMPTrackerConfig) *ICMPTracker {
-	it := &ICMPTracker{
-		id:          config.ID,
-		initSeq:     config.InitialSeq,
-		latestSeq:   config.InitialSeq,
-		nrMaxCount:  config.MaxCount,
-		store:       make(map[int]*ICMPTrackerEntry),
-		serviceChan: make(chan chan ServiceRequest),
-		intv:        config.Interval,
-		pktTimeout:  config.PacketTimeout,
+const leastAcceptablePktIntervalMilliseconds = 10
+const maximumAcceptablePktTimeoutSecs = 10
+
+func estimateInternalTimeoutChCapacity(perPktTimeout time.Duration, pktInterval time.Duration) int {
+	// According to the formula:
+	// $$\text{Maximum Outstanding Packets} = \text{Maximum Send Rate} \times \text{Packet Timeout Duration}$$
+
+	var redundancyFactor float64 = 1.5
+
+	cap := int(redundancyFactor * float64(perPktTimeout.Milliseconds()) / float64(pktInterval.Milliseconds()))
+	if cap < 1 {
+		cap = 1
 	}
-	return it
+
+	return cap
+}
+
+func NewICMPTracker(config *ICMPTrackerConfig) (*ICMPTracker, error) {
+	if config.Interval.Milliseconds() < leastAcceptablePktIntervalMilliseconds {
+		return nil, fmt.Errorf("interval must be at least %d milliseconds", leastAcceptablePktIntervalMilliseconds)
+	}
+
+	if config.PacketTimeout.Seconds() > maximumAcceptablePktTimeoutSecs {
+		return nil, fmt.Errorf("packet timeout must be at most %d seconds", maximumAcceptablePktTimeoutSecs)
+	}
+
+	it := &ICMPTracker{
+		id:              config.ID,
+		initSeq:         config.InitialSeq,
+		latestSeq:       config.InitialSeq,
+		nrMaxCount:      config.MaxCount,
+		store:           make(map[int]*ICMPTrackerEntry),
+		serviceChan:     make(chan chan ServiceRequest),
+		intv:            config.Interval,
+		pktTimeout:      config.PacketTimeout,
+		internTimeoutCh: make(chan int, estimateInternalTimeoutChCapacity(config.PacketTimeout, config.Interval)),
+	}
+	return it, nil
 }
 
 func (it *ICMPTracker) doRun(ctx context.Context) {
@@ -212,7 +239,10 @@ func (it *ICMPTracker) tryMarkAsTimeout(ctx context.Context, seq int) error {
 			it.nrUnAck--
 			var zeroTime time.Time
 			ent.ReceivedAt = append(ent.ReceivedAt, zeroTime)
-			it.internTimeoutCh <- seq
+
+			go func(seq int) {
+				it.internTimeoutCh <- seq
+			}(seq)
 		}
 		return nil
 	}
@@ -370,13 +400,47 @@ func (it *ICMPTracker) GetID() int {
 }
 
 func (it *ICMPTracker) ReadTrackerEntry(seq int) *ICMPTrackerEntry {
-	if ent, ok := it.store[seq]; ok {
-		newEnt := new(ICMPTrackerEntry)
-		*newEnt = *ent
-		newEnt.Timer = nil
-		return newEnt
+	serviceCh := <-it.serviceChan
+	defer close(serviceCh)
+
+	var result struct {
+		entry *ICMPTrackerEntry
 	}
-	return nil
+	resultPtr := &result
+	fn := func(ctx context.Context) error {
+		if ent, ok := it.store[seq]; ok {
+			newEnt := new(ICMPTrackerEntry)
+			*newEnt = *ent
+			newEnt.Timer = nil
+			resultPtr.entry = newEnt
+		}
+		return nil
+	}
+	resultCh := make(chan error)
+	serviceCh <- ServiceRequest{
+		Func:   fn,
+		Result: resultCh,
+	}
+	<-resultCh
+
+	return resultPtr.entry
+}
+
+func (it *ICMPTracker) DeleteTrackerEntry(seq int) {
+	serviceCh := <-it.serviceChan
+	defer close(serviceCh)
+
+	fn := func(ctx context.Context) error {
+		delete(it.store, seq)
+		return nil
+	}
+
+	resultCh := make(chan error)
+	serviceCh <- ServiceRequest{
+		Func:   fn,
+		Result: resultCh,
+	}
+	<-resultCh
 }
 
 const standardMTU = 1500
@@ -403,7 +467,10 @@ func main() {
 		PacketTimeout: pktTimeout,
 		Interval:      500 * time.Millisecond,
 	}
-	tracker := NewICMPTracker(icmpTrackerConfig)
+	tracker, err := NewICMPTracker(icmpTrackerConfig)
+	if err != nil {
+		log.Fatalf("failed to create ICMP tracker: %v", err)
+	}
 
 	ctx := context.TODO()
 	timeoutCh, repliesCh := tracker.Run(ctx, conn)
@@ -434,6 +501,7 @@ func main() {
 					msg.Peer.String(), seq, strings.Join(rttsStr, ", "),
 					trackerEnt.HasDup(),
 				)
+				tracker.DeleteTrackerEntry(seq)
 			}
 		}
 	}()
