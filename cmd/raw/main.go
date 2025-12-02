@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -19,14 +20,24 @@ type ICMPTrackerEntry struct {
 }
 
 func (itEnt *ICMPTrackerEntry) HasReceived() bool {
+	if itEnt == nil {
+		return false
+	}
 	return len(itEnt.ReceivedAt) > 0
 }
 
 func (itEnt *ICMPTrackerEntry) HasDup() bool {
+	if itEnt == nil {
+		return false
+	}
 	return len(itEnt.ReceivedAt) > 1
 }
 
-func (itEnt *ICMPTrackerEntry) RTT() []time.Duration {
+func (itEnt *ICMPTrackerEntry) RTTs() []time.Duration {
+	if itEnt == nil {
+		return nil
+	}
+
 	deltas := make([]time.Duration, 0)
 	for _, receivedAt := range itEnt.ReceivedAt {
 		deltas = append(deltas, receivedAt.Sub(itEnt.SentAt))
@@ -95,9 +106,15 @@ func (it *ICMPTracker) doRun(ctx context.Context) {
 	}
 }
 
+type ReplyMsg struct {
+	ICMPRaw  *icmp.Message
+	ICMPEcho *icmp.Echo
+	Peer     net.Addr
+}
+
 // returns a read-only channel of timeout events
 // and this timeout chan must be consumed to avoid deadlock.
-func (it *ICMPTracker) Run(ctx context.Context) <-chan int {
+func (it *ICMPTracker) Run(ctx context.Context, conn *icmp.PacketConn) (<-chan int, <-chan *ReplyMsg) {
 	go it.doRun(ctx)
 
 	timeoutCh := make(chan int)
@@ -108,7 +125,48 @@ func (it *ICMPTracker) Run(ctx context.Context) <-chan int {
 		}
 	}()
 
-	return timeoutCh
+	repliesCh := make(chan *ReplyMsg)
+	go func() {
+		defer close(repliesCh)
+
+		for it.IsNotDone() || it.GetNrUnAck() > 0 {
+
+			if err := conn.SetReadDeadline(time.Now().Add(it.pktTimeout)); err != nil {
+				log.Fatalf("failed to set read deadline: %v", err)
+			}
+
+			receivBuf := make([]byte, standardMTU)
+			n, peer, err := conn.ReadFrom(receivBuf)
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					log.Printf("timeout reading from connection, skipping")
+					continue
+				}
+
+				log.Fatalf("failed to read from connection: %v", err)
+			}
+			log.Printf("read %d bytes from %v", n, peer.String())
+
+			receivMsg, err := icmp.ParseMessage(ipv4.ICMPTypeEchoReply.Protocol(), receivBuf[:n])
+			if err != nil {
+				log.Fatalf("failed to parse icmp message: %v", err)
+			}
+
+			if icmpEcho, ok := receivMsg.Body.(*icmp.Echo); ok {
+				if icmpEcho.ID == it.GetID() {
+					it.MarkReceived(icmpEcho.Seq)
+					replyMsg := &ReplyMsg{
+						ICMPRaw:  receivMsg,
+						ICMPEcho: icmpEcho,
+						Peer:     peer,
+					}
+					repliesCh <- replyMsg
+				}
+			}
+		}
+	}()
+
+	return timeoutCh, repliesCh
 }
 
 func (it *ICMPTracker) MarkSent(seq int) error {
@@ -311,6 +369,16 @@ func (it *ICMPTracker) GetID() int {
 	return it.id
 }
 
+func (it *ICMPTracker) ReadTrackerEntry(seq int) *ICMPTrackerEntry {
+	if ent, ok := it.store[seq]; ok {
+		newEnt := new(ICMPTrackerEntry)
+		*newEnt = *ent
+		newEnt.Timer = nil
+		return newEnt
+	}
+	return nil
+}
+
 const standardMTU = 1500
 
 func main() {
@@ -338,50 +406,38 @@ func main() {
 	tracker := NewICMPTracker(icmpTrackerConfig)
 
 	ctx := context.TODO()
-	timeoutCh := tracker.Run(ctx)
+	timeoutCh, repliesCh := tracker.Run(ctx, conn)
+	receiverCh := make(chan interface{})
 	go func() {
-		for seq := range timeoutCh {
-			log.Printf("timeout for seq: %v", seq)
+		defer close(receiverCh)
+		for {
+			select {
+			case seq, ok := <-timeoutCh:
+				if !ok {
+					return
+				}
+				log.Printf("timeout for seq: %v", seq)
+			case msg, ok := <-repliesCh:
+				if !ok {
+					return
+				}
+				seq := msg.ICMPEcho.Seq
+				trackerEnt := tracker.ReadTrackerEntry(seq)
+				rtts := trackerEnt.RTTs()
+				rttsStr := make([]string, 0)
+				for _, rtt := range rtts {
+					rttsStr = append(rttsStr, rtt.String())
+				}
+				log.Printf(
+					"%d bytes reply from %s: seq: %v, rtts: %s, dup: %v",
+					msg.ICMPRaw.Body.Len(ipv4.ICMPTypeEchoReply.Protocol()),
+					msg.Peer.String(), seq, strings.Join(rttsStr, ", "),
+					trackerEnt.HasDup(),
+				)
+			}
 		}
 	}()
 	defer tracker.Close()
-
-	receiveCh := make(chan interface{})
-	go func() {
-		defer close(receiveCh)
-
-		for tracker.IsNotDone() || tracker.GetNrUnAck() > 0 {
-
-			if err := conn.SetReadDeadline(time.Now().Add(pktTimeout)); err != nil {
-				log.Fatalf("failed to set read deadline: %v", err)
-			}
-
-			receivBuf := make([]byte, standardMTU)
-			n, peer, err := conn.ReadFrom(receivBuf)
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					log.Printf("timeout reading from connection, skipping")
-					continue
-				}
-
-				log.Fatalf("failed to read from connection: %v", err)
-			}
-			log.Printf("read %d bytes from %v", n, peer.String())
-
-			receivMsg, err := icmp.ParseMessage(ipv4.ICMPTypeEchoReply.Protocol(), receivBuf[:n])
-			if err != nil {
-				log.Fatalf("failed to parse icmp message: %v", err)
-			}
-
-			if icmpEcho, ok := receivMsg.Body.(*icmp.Echo); ok {
-				if icmpEcho.ID == tracker.GetID() {
-					tracker.MarkReceived(icmpEcho.Seq)
-					log.Printf("id: %v, seq: %v", icmpEcho.ID, icmpEcho.Seq)
-				}
-			}
-		}
-
-	}()
 
 	for tracker.IsNotDone() {
 		seq := tracker.IterateSeq()
@@ -405,6 +461,5 @@ func main() {
 			time.Sleep(sleepDur)
 		}
 	}
-
-	<-receiveCh
+	<-receiverCh
 }
