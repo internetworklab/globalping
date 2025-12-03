@@ -36,7 +36,7 @@ type wrappedpacket struct {
 type EventType string
 
 const (
-	EVNewInputAdded   EventType = "new_input"
+	EVSourceAdded     EventType = "source_added"
 	EVSourceDrained   EventType = "source_drained"
 	EVNewPktAvailable EventType = "new_pkt_available"
 	EVNewOutputAdded  EventType = "new_output"
@@ -174,7 +174,7 @@ func (mimoSched *MIMOScheduler) AddInput(inputChan <-chan interface{}, label str
 	}
 
 	evObj := EventObject{
-		Type:    EVNewInputAdded,
+		Type:    EVSourceAdded,
 		Payload: newNode,
 		Result:  make(chan *EventResult),
 	}
@@ -290,7 +290,7 @@ func (evObj *EventObject) handleOutputRemoved(sched *MIMOScheduler) error {
 
 func (mimoSched *MIMOScheduler) handleEvent(evObj *EventObject) error {
 	switch evObj.Type {
-	case EVNewInputAdded:
+	case EVSourceAdded:
 		return evObj.handleNewInputAdded(mimoSched)
 	case EVSourceDrained:
 		return evObj.handleSourceDrained(mimoSched)

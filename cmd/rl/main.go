@@ -36,11 +36,9 @@ func main() {
 	}
 
 	nullChan, recorderChan := speedMeasurer.Run(outChan)
-	previousCounter := 0
-	previousTimestamp := time.Now()
 	for {
 		select {
-		case _, ok :=<-nullChan:
+		case _, ok := <-nullChan:
 			if !ok {
 				fmt.Println("No more null records")
 				goto for_end
@@ -51,16 +49,8 @@ func main() {
 				fmt.Println("No more records")
 				goto for_end
 			}
-			timeDelta := record.Timestamp.Sub(previousTimestamp)
-			if timeDelta.Milliseconds() <= 100 {
-				continue
-			}
-			increment := record.Counter - previousCounter
-			speed := float64(increment) / timeDelta.Seconds()
-			fmt.Printf("speed: %f items/s\n", speed)
-			previousCounter = record.Counter
-			previousTimestamp = record.Timestamp
+			fmt.Printf("speed: %s\n", record.String())
 		}
 	}
-	for_end:
+for_end:
 }
