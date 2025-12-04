@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"math/rand"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,10 +15,10 @@ import (
 func main() {
 	throttleConfig := pkgratelimit.TokenBasedThrottleConfig{
 		RefreshInterval:       1 * time.Second,
-		TokenQuotaPerInterval: 3,
+		TokenQuotaPerInterval: 20,
 	}
 	smootherConfig := pkgratelimit.BurstSmoother{
-		LeastSampleInterval: 10 * time.Millisecond,
+		LeastSampleInterval: 100 * time.Millisecond,
 	}
 	mimoScheduler := pkgratelimit.NewMIMOScheduler(throttleConfig, smootherConfig)
 
@@ -35,16 +34,14 @@ func main() {
 	icmpHub.Run(ctx)
 
 	hubProxy1 := icmpHub.GetProxy()
-
-	icmpId := rand.Intn(0xffff)
-	log.Printf("ICMP ID: %d", icmpId)
+	hubProxy2 := icmpHub.GetProxy()
 
 	// fake death ping generator
 	go func() {
-		defer log.Println("Fake pings generator closed")
+		defer log.Println("[DBG] generator 1 closed")
 		defer hubProxy1.Close()
 
-		log.Println("[DBG] fake pings generator started")
+		log.Println("[DBG] generator 1 started")
 
 		writeCh := hubProxy1.GetWriter()
 
@@ -56,27 +53,87 @@ func main() {
 				Host: "www.example.com",
 				Type: pkghub.TestPacketTypePing,
 				Seq:  lastSeq,
-				Id:   icmpId,
+				Id:   1,
 			}
 			select {
 			case <-ctx.Done():
 				return
 			case writeCh <- mockPacket:
 				lastSeq++
-				log.Printf("Sent ping request: %+v", mockPacket)
+			}
+		}
+	}()
+
+	// second death ping generator
+	go func() {
+		defer log.Println("[DBG] generator 2 closed")
+		defer hubProxy2.Close()
+
+		log.Println("[DBG] generator 2 started")
+		lastSeq := 0
+		writeCh := hubProxy2.GetWriter()
+
+		for {
+			mockPacket := pkghub.TestPacket{
+				Host: "x.com",
+				Type: pkghub.TestPacketTypePing,
+				Seq:  lastSeq,
+				Id:   1,
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case writeCh <- mockPacket:
+				lastSeq++
+			}
+		}
+
+	}()
+
+	// fake death pong receiver
+	go func() {
+		defer log.Println("[DBG] receiver 1 closed")
+		log.Println("[DBG] receiver 1 started")
+
+		speedMeter := pkgratelimit.SpeedMeasurer{
+			RefreshInterval: 250 * time.Millisecond,
+			MinTimeDelta:    250 * time.Millisecond,
+		}
+
+		readCh := hubProxy1.GetReader()
+		readCh, speed := speedMeter.Run(readCh)
+		go func() {
+			for speedRecord := range speed {
+				log.Printf("[DBG] receiver 1 Speed: %s", speedRecord.String())
+			}
+		}()
+		for pong := range readCh {
+			if pongPkt, ok := pong.(pkghub.TestPacket); ok && pongPkt.Type == pkghub.TestPacketTypePong {
+				// log.Printf("[DBG] receiver 1 Received pong: %+v", pongPkt)
 			}
 		}
 	}()
 
 	// fake death pong receiver
 	go func() {
-		defer log.Println("Fake pongs receiver closed")
-		log.Println("[DBG] fake pongs receiver started")
+		defer log.Println("[DBG] receiver 2 closed")
+		log.Println("[DBG] receiver 2 started")
 
-		readCh := hubProxy1.GetReader()
+		speedMeter := pkgratelimit.SpeedMeasurer{
+			RefreshInterval: 250 * time.Millisecond,
+			MinTimeDelta:    250 * time.Millisecond,
+		}
+
+		readCh := hubProxy2.GetReader()
+		readCh, speed := speedMeter.Run(readCh)
+		go func() {
+			for speedRecord := range speed {
+				log.Printf("[DBG] receiver 2 Speed: %s", speedRecord.String())
+			}
+		}()
 		for pong := range readCh {
 			if pongPkt, ok := pong.(pkghub.TestPacket); ok && pongPkt.Type == pkghub.TestPacketTypePong {
-				log.Printf("Received pong: %+v", pongPkt)
+				// log.Printf("[DBG] receiver 2 Received pong: %+v", pongPkt)
 			}
 		}
 	}()

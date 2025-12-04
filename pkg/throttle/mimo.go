@@ -116,7 +116,7 @@ func (sched *MIMOScheduler) collectWrappedPktFromLink(head *MIMOInputSourceNode)
 					<-evObj.Result
 				}()
 			} else {
-				return &wrappedpacket{label: currentNext.Label, packet: pkt}, currentNext
+				return &wrappedpacket{label: currentNext.Label, packet: pkt}, currentNext.NextNode
 			}
 		default:
 			// noop, simply for making the operation non-blocking

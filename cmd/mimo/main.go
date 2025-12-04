@@ -33,7 +33,7 @@ func main() {
 	}
 	throttleCfg := pkgratelimit.TokenBasedThrottleConfig{
 		RefreshInterval:       1 * time.Second,
-		TokenQuotaPerInterval: 5,
+		TokenQuotaPerInterval: 10,
 	}
 	mimoSched := pkgratelimit.NewMIMOScheduler(throttleCfg, smootherCfg)
 	ctx := context.Background()
