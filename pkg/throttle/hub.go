@@ -119,7 +119,12 @@ type TestPacket struct {
 }
 
 func (hub *SharedThrottleHub) GetProxy() SharedThrottleProxy {
-	requestCh := <-hub.serviceChan
+	requestCh, ok := <-hub.serviceChan
+	if !ok {
+		// the hub is already shutdown
+		return nil
+	}
+
 	defer close(requestCh)
 
 	var handlerId *int = new(int)

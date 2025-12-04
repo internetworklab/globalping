@@ -168,7 +168,12 @@ func removeDeadNodes(head *MIMOInputSourceNode) *MIMOInputSourceNode {
 
 // AddInput adds a new labeled input channel to the source chain.
 func (mimoSched *MIMOScheduler) AddInput(inputChan <-chan interface{}, label string) error {
-	requestCh := <-mimoSched.muxerServiceChan
+	requestCh, ok := <-mimoSched.muxerServiceChan
+	if !ok {
+		// the engine was shutdown
+		return fmt.Errorf("engine was shutdown")
+	}
+
 	defer close(requestCh)
 	newNode := &MIMOInputSourceNode{
 		InputChan: make(chan interface{}, 1),
@@ -188,7 +193,11 @@ func (mimoSched *MIMOScheduler) AddInput(inputChan <-chan interface{}, label str
 			newNode.InputChan <- pkt
 			// go notify the hub that there is some new packet available
 			go func() {
-				evCh := <-mimoSched.muxerServiceChan
+				evCh, ok := <-mimoSched.muxerServiceChan
+				if !ok {
+					// the engine was shutdown
+					return
+				}
 				defer close(evCh)
 				evObj := EventObject{
 					Type: EVNewPktAvailable,
@@ -220,7 +229,11 @@ func (mimoSched *MIMOScheduler) AddOutput(outputChan chan<- interface{}, labelPa
 		OutputChan:   outputChan,
 	}
 
-	evCh := <-mimoSched.muxerServiceChan
+	evCh, ok := <-mimoSched.muxerServiceChan
+	if !ok {
+		// the engine was shutdown
+		return fmt.Errorf("engine was shutdown")
+	}
 	defer close(evCh)
 
 	evObj := EventObject{
@@ -236,7 +249,11 @@ func (mimoSched *MIMOScheduler) AddOutput(outputChan chan<- interface{}, labelPa
 
 // RemoveOutput removes a specific labeled output binding.
 func (mimoSched *MIMOScheduler) RemoveOutput(labelBindingName string) error {
-	evCh := <-mimoSched.muxerServiceChan
+	evCh, ok := <-mimoSched.muxerServiceChan
+	if !ok {
+		// the engine was shutdown
+		return fmt.Errorf("engine was shutdown")
+	}
 	defer close(evCh)
 	evObj := EventObject{
 		Type:    EVOutputRemoved,

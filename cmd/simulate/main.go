@@ -33,7 +33,15 @@ func main() {
 	icmpHub.Run(ctx)
 
 	hubProxy1 := icmpHub.GetProxy()
+	if hubProxy1 == nil {
+		// the hub was shutdown pre-maturely
+		return
+	}
 	hubProxy2 := icmpHub.GetProxy()
+	if hubProxy2 == nil {
+		// the hub was shutdown pre-maturely
+		return
+	}
 
 	// fake death ping generator
 	go func() {
