@@ -14,6 +14,11 @@ import (
 	"github.com/google/btree"
 )
 
+type DataBlob struct {
+	BufferedChan chan interface{}
+	Size int
+}
+
 type Node struct {
 	Id                int
 	Name              string
@@ -23,26 +28,11 @@ type Node struct {
 	CurrentGeneration *int
 	BirthGeneration   int
 	Mux               sync.Mutex
+	queuePending      chan interface{}
 }
 
 func (nd *Node) GetAge() float64 {
 	return float64(*nd.CurrentGeneration - nd.BirthGeneration)
-}
-
-type DataTask struct {
-	Id      int
-	NodeRef *Node
-	Segment chan interface{}
-}
-
-func (dt *DataTask) Less(item btree.Item) bool {
-	if dataTaskItem, ok := item.(*DataTask); ok {
-		if dt.NodeRef.Id == dataTaskItem.NodeRef.Id {
-			return dt.Id < dataTaskItem.Id
-		}
-		return dt.NodeRef.Less(dataTaskItem.NodeRef)
-	}
-	panic("comparing data task with unexpected item type")
 }
 
 func (node *Node) PrintWithIdx(idx int) {
@@ -51,27 +41,19 @@ func (node *Node) PrintWithIdx(idx int) {
 
 const defaultChannelBufferSize = 1024
 
-func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, taskQueue *btree.BTree) {
+func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BTree) {
 	go func() {
 		defer log.Printf("node %s is drained", nd.Name)
 
-		toBeSendFragments := make(chan chan interface{})
+		toBeSendFragments := make(chan DataBlob)
 		taskSeq := 0
 		go func() {
 			defer close(toBeSendFragments)
-			for fragment := range toBeSendFragments {
-
-				// whenever there is a segment to be sent,
-				// create a data task and notify the event loop center
-				dataTask := &DataTask{
-					Id:      nd.Id*65536 + taskSeq,
-					NodeRef: nd,
-					Segment: fragment,
-				}
-				taskQueue.ReplaceOrInsert(dataTask)
+			for dataBlob := range toBeSendFragments {
+				nd.queuePending <- struct{}{}
 				evObj := EVObject{
 					Type:    EVNewDataTask,
-					Payload: nil,
+					Payload: dataBlob,
 					Result:  make(chan error),
 				}
 				evSubCh := <-evCh
@@ -88,7 +70,10 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, taskQueue *btree.BT
 			case staging <- item:
 				itemsLoaded++
 			default:
-				toBeSendFragments <- staging
+				toBeSendFragments <- DataBlob{
+					BufferedChan: staging,
+					Size: itemsLoaded,
+				}
 				itemsLoaded = 0
 				staging = make(chan interface{}, defaultChannelBufferSize)
 			}
@@ -97,7 +82,10 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, taskQueue *btree.BT
 		if itemsLoaded > 0 {
 			// flush the remaining items in buffer
 			itemsLoaded = 0
-			toBeSendFragments <- staging
+			toBeSendFragments <- DataBlob{
+				BufferedChan: staging,
+				Size: itemsLoaded,
+			}
 		}
 	}()
 }
@@ -133,26 +121,24 @@ type EVObject struct {
 }
 
 // the returning channel doesn't emit anything meaningful, it's simply for synchronization
-func (nd *Node) Run(outC chan<- interface{}, taskObject *DataTask) <-chan interface{} {
+func (nd *Node) Run(outC chan<- interface{}, nodeObject *Node, dataBlob DataBlob) <-chan interface{} {
 	runCh := make(chan interface{})
 
 	go func() {
 		defer close(runCh)
-		defer log.Println("runCh closed", "node", taskObject.NodeRef.Name)
 
 		timeout := time.After(defaultTimeSlice)
 
 		for {
 			select {
 			case <-timeout:
-				log.Println("timeout", "node", taskObject.NodeRef.Name)
 				return
-			case item, ok := <-taskObject.Segment:
+			case item, ok := <-dataBlob.BufferedChan:
 				if !ok {
 					return
 				}
 				outC <- item
-				taskObject.NodeRef.ItemsCopied++
+				nodeObject.ItemsCopied++
 			default:
 				return
 			}
@@ -183,7 +169,8 @@ func main() {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	taskQueue := btree.New(2)
+
+	nodeQueue := btree.New(2)
 
 	outC := make(chan interface{})
 	evCh := make(chan chan EVObject)
@@ -216,35 +203,43 @@ func main() {
 						panic("unexpected node type")
 					}
 					log.Printf("Added node %s to evCenter", newNode.Name)
-					newNode.RegisterDataEvent(evCh, taskQueue)
+					newNode.RegisterDataEvent(evCh, nodeQueue)
 					evRequest.Result <- nil
 				case EVNewDataTask:
-					headTaskItem := taskQueue.DeleteMin()
-					if headTaskItem == nil {
-						panic("head task item shouldn't be nil")
+					headItem := nodeQueue.DeleteMin()
+					if headItem == nil {
+						panic("head item in the queue shouldn't be nil")
 					}
 
-					taskObject, ok := headTaskItem.(*DataTask)
+					nodeObject, ok := headItem.(*Node)
 					if !ok {
-						panic("unexpected task item type")
+						panic("head item in the queue is not a of type struct Node")
 					}
 
-					// go func() {
-						// log.Println("running task", taskObject.NodeRef.Name, "taskId", taskObject.Id)
-						// defer log.Println("task", taskObject.NodeRef.Name, "taskId", taskObject.Id, "finished")
+					dataBlob, ok := evRequest.Payload.(DataBlob)
+					if !ok {
+						panic("payload of event is not a of type struct DataBlob")
+					}
 
-						// taskObject.NodeRef.Mux.Lock()
-						// defer taskObject.NodeRef.Mux.Unlock()
+					go func() {
+						log.Println("running node", nodeObject.Name)
+						defer log.Println("node", nodeObject.Name, "finished")
 
-						nrCopiedPreRun := taskObject.NodeRef.ItemsCopied
-						<-taskObject.NodeRef.Run(outC, taskObject)
-						nrCopiedPostRun := taskObject.NodeRef.ItemsCopied
+						nodeObject.Mux.Lock()
+						defer nodeObject.Mux.Unlock()
+
+						nrCopiedPreRun := nodeObject.ItemsCopied
+						<-nodeObject.Run(outC, nodeObject, dataBlob)
+						nrCopiedPostRun := nodeObject.ItemsCopied
 						if nrCopiedPostRun == nrCopiedPreRun {
 							// extra penalty for idling
-							taskObject.NodeRef.ScheduledTime += 1.0
+							nodeObject.ScheduledTime += 1.0
 						}
-						taskObject.NodeRef.ScheduledTime += 1.0
-					// }()
+						nodeObject.ScheduledTime += 1.0
+
+						// release the queue lock, to enable the node be re-queued again
+						<-nodeObject.queuePending
+					}()
 					evRequest.Result <- nil
 				default:
 					panic(fmt.Sprintf("unknown event type: %s", evRequest.Type))
@@ -282,6 +277,10 @@ func main() {
 			BirthGeneration:   *numEventsPassed,
 			InC:               anonymousSource(ctx, name),
 			Mux:               sync.Mutex{},
+
+			// the buffer size of this channel `queuePending` must be 1,
+			// to ensure that, for every moment, at most 1 node instance is in-queue
+			queuePending: make(chan interface{}, 1),
 		}
 		allNodes[newNodeId] = node
 		return node
