@@ -278,6 +278,22 @@ func main() {
 		<-evObj.Result
 	}
 
+	// consumer goroutine
+	go func() {
+		stat := make(map[string]int)
+		total := 0
+		for muxedItem := range outC {
+			stat[muxedItem.(string)]++
+			total++
+			if total%1000 == 0 {
+				for k, v := range stat {
+					fmt.Printf("%s: %d, %.2f%%\n", k, v, 100*float64(v)/float64(total))
+				}
+				stat = make(map[string]int)
+			}
+		}
+	}()
+
 	sourceA := anonymousSource(ctx, "A")
 	sourceB := anonymousSource(ctx, "B")
 	sourceC := anonymousSource(ctx, "C")
