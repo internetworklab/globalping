@@ -49,21 +49,23 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, ioTodoQueue *btree.
 			default:
 				if itemsLoaded > 0 {
 					itemsLoaded = 0
+					// todo: do not overwhelming the ev loop
+					if ioTodoQueue.Get(nd) == nil {
+						ioTodoQueue.ReplaceOrInsert(nd)
 
-					ioTodoQueue.ReplaceOrInsert(nd)
-
-					evRequestCh, ok := <-evCh
-					if !ok {
-						// service channel was closed
-						return
+						evRequestCh, ok := <-evCh
+						if !ok {
+							// service channel was closed
+							return
+						}
+						evObj := EVObject{
+							Type:    EVNodeDataAvailable,
+							Payload: nil,
+							Result:  make(chan error),
+						}
+						evRequestCh <- evObj
+						<-evObj.Result
 					}
-					evObj := EVObject{
-						Type:    EVNodeDataAvailable,
-						Payload: nil,
-						Result:  make(chan error),
-					}
-					evRequestCh <- evObj
-					<-evObj.Result
 				}
 			}
 
@@ -178,35 +180,33 @@ func main() {
 					if !ok {
 						panic("unexpected node type")
 					}
+					log.Printf("Added node %s to evCenter", newNode.Name)
 					newNode.RegisterDataEvent(evCh, mainQueue)
 				case EVNodeDataAvailable:
-					for {
-						headNodeItem := mainQueue.DeleteMin()
-						if headNodeItem == nil {
-							panic("head node item shouldn't be nil")
-						}
-
-						headNode, ok := headNodeItem.(*Node)
-						if !ok {
-							panic("unexpected node type")
-						}
-
-						nrCopiedPreRun := headNode.ItemsCopied
-						<-headNode.Run(outC)
-						nrCopiedPostRun := headNode.ItemsCopied
-						scheduledTimeDelta := 1.0 / math.Max(1.0, float64(len(allNodes)))
-						if nrCopiedPostRun == nrCopiedPreRun {
-							// extra penalty for idling
-							headNode.ScheduledTime = headNode.ScheduledTime + scheduledTimeDelta
-						}
-						headNode.ScheduledTime = headNode.ScheduledTime + scheduledTimeDelta
-						headNode.LifeSpan = headNode.LifeSpan + 1.0
-
-						if headNode.Dead {
-							delete(allNodes, headNode.Id)
-						}
+					headNodeItem := mainQueue.DeleteMin()
+					if headNodeItem == nil {
+						panic("head node item shouldn't be nil")
 					}
 
+					headNode, ok := headNodeItem.(*Node)
+					if !ok {
+						panic("unexpected node type")
+					}
+
+					nrCopiedPreRun := headNode.ItemsCopied
+					<-headNode.Run(outC)
+					nrCopiedPostRun := headNode.ItemsCopied
+					scheduledTimeDelta := 1.0 / math.Max(1.0, float64(len(allNodes)))
+					if nrCopiedPostRun == nrCopiedPreRun {
+						// extra penalty for idling
+						headNode.ScheduledTime = headNode.ScheduledTime + scheduledTimeDelta
+					}
+					headNode.ScheduledTime = headNode.ScheduledTime + scheduledTimeDelta
+					headNode.LifeSpan = headNode.LifeSpan + 1.0
+
+					if headNode.Dead {
+						delete(allNodes, headNode.Id)
+					}
 				default:
 					panic(fmt.Sprintf("unknown event type: %s", evRequest.Type))
 				}
@@ -260,18 +260,13 @@ func main() {
 		}
 	}()
 
-	log.Println("Creating sources")
 	nodeA := add("A")
 	nodeB := add("B")
 	nodeC := add("C")
 
-	log.Println("adding nodes to evCenter")
 	addToEvCenter(nodeA)
-	log.Println("nodeA added to evCenter")
 	addToEvCenter(nodeB)
-	log.Println("nodeB added to evCenter")
 	addToEvCenter(nodeC)
-	log.Println("nodeC added to evCenter")
 
 	sig := <-sigs
 	fmt.Println("signal received: ", sig, " exitting...")
