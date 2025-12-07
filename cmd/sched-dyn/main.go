@@ -16,6 +16,7 @@ import (
 type DataBlob struct {
 	BufferedChan chan interface{}
 	Size         int
+	Remaining    int
 }
 
 type Node struct {
@@ -30,24 +31,25 @@ type Node struct {
 const defaultChannelBufferSize = 1024
 
 func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BTree) {
-	toBeSendFragments := make(chan DataBlob)
+	toBeSendFragments := make(chan *DataBlob)
 	taskSeq := 0
 	go func() {
 		defer close(toBeSendFragments)
 		for dataBlob := range toBeSendFragments {
+			for dataBlob.Remaining > 0 {
+				evSubCh := <-evCh
+				nd.queuePending <- struct{}{}
+				nodeQueue.ReplaceOrInsert(nd)
+				evObj := EVObject{
+					Type:    EVNewDataTask,
+					Payload: dataBlob,
+					Result:  make(chan error),
+				}
 
-			evSubCh := <-evCh
-			nd.queuePending <- struct{}{}
-			nodeQueue.ReplaceOrInsert(nd)
-			evObj := EVObject{
-				Type:    EVNewDataTask,
-				Payload: dataBlob,
-				Result:  make(chan error),
+				evSubCh <- evObj
+				<-evObj.Result
+				taskSeq++
 			}
-
-			evSubCh <- evObj
-			<-evObj.Result
-			taskSeq++
 		}
 	}()
 
@@ -61,9 +63,10 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 			case staging <- item:
 				itemsLoaded++
 			default:
-				toBeSendFragments <- DataBlob{
+				toBeSendFragments <- &DataBlob{
 					BufferedChan: staging,
 					Size:         itemsLoaded,
+					Remaining:    itemsLoaded,
 				}
 				itemsLoaded = 0
 				staging = make(chan interface{}, defaultChannelBufferSize)
@@ -72,11 +75,12 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 
 		if itemsLoaded > 0 {
 			// flush the remaining items in buffer
-			itemsLoaded = 0
-			toBeSendFragments <- DataBlob{
+			toBeSendFragments <- &DataBlob{
 				BufferedChan: staging,
 				Size:         itemsLoaded,
+				Remaining:    itemsLoaded,
 			}
+			itemsLoaded = 0
 		}
 	}()
 }
@@ -118,7 +122,7 @@ type EVObject struct {
 }
 
 // the returning channel doesn't emit anything meaningful, it's simply for synchronization
-func (nd *Node) Run(outC chan<- interface{}, nodeObject *Node, dataBlob DataBlob) <-chan int {
+func (nd *Node) Run(outC chan<- interface{}, nodeObject *Node, dataBlob *DataBlob) <-chan int {
 	runCh := make(chan int)
 
 	var itemsCopied *int = new(int)
@@ -135,6 +139,7 @@ func (nd *Node) Run(outC chan<- interface{}, nodeObject *Node, dataBlob DataBlob
 		for {
 			select {
 			case <-timeout:
+				// todo: Some data may still in the buffer when timeout.
 				return
 			case item, ok := <-dataBlob.BufferedChan:
 				if !ok {
@@ -142,6 +147,7 @@ func (nd *Node) Run(outC chan<- interface{}, nodeObject *Node, dataBlob DataBlob
 				}
 				outC <- item
 				*itemsCopied = *itemsCopied + 1
+				dataBlob.Remaining--
 			default:
 				return
 			}
@@ -298,7 +304,7 @@ func main() {
 						panic("head item in the queue is not a of type struct Node")
 					}
 
-					dataBlob, ok := evRequest.Payload.(DataBlob)
+					dataBlob, ok := evRequest.Payload.(*DataBlob)
 					if !ok {
 						panic("payload of event is not a of type struct DataBlob")
 					}
