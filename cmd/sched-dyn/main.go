@@ -13,12 +13,6 @@ import (
 	"github.com/google/btree"
 )
 
-type DataBlob struct {
-	BufferedChan chan interface{}
-	Size         int
-	Remaining    int
-}
-
 type Node struct {
 	Id             int
 	Name           string
@@ -26,6 +20,13 @@ type Node struct {
 	ScheduledTime  float64
 	queuePending   chan interface{}
 	NumItemsCopied []int
+	CurrentDataBlob *DataBlob
+}
+
+type DataBlob struct {
+	BufferedChan chan interface{}
+	Size         int
+	Remaining    int
 }
 
 const defaultChannelBufferSize = 1024
@@ -34,22 +35,22 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 	toBeSendFragments := make(chan *DataBlob)
 	taskSeq := 0
 	go func() {
-		defer close(toBeSendFragments)
+
 		for dataBlob := range toBeSendFragments {
 			for dataBlob.Remaining > 0 {
-				log.Printf("node %s is sending data blob, remaining %d items", nd.Name, dataBlob.Remaining)
 				evSubCh := <-evCh
 				nd.queuePending <- struct{}{}
-				nodeQueue.ReplaceOrInsert(nd)
+				nd.CurrentDataBlob = dataBlob
 				evObj := EVObject{
 					Type:    EVNewDataTask,
-					Payload: dataBlob,
+					Payload: nd,
 					Result:  make(chan error),
 				}
 
 				evSubCh <- evObj
 				<-evObj.Result
 				taskSeq++
+				<-nd.queuePending
 			}
 		}
 	}()
@@ -63,9 +64,7 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 			select {
 			case staging <- item:
 				itemsLoaded++
-				log.Printf("node %s loaded %d items", nd.Name, itemsLoaded)
 			default:
-				log.Printf("node %s is full, flushing %d items (default case)", nd.Name, itemsLoaded)
 				toBeSendFragments <- &DataBlob{
 					BufferedChan: staging,
 					Size:         itemsLoaded,
@@ -77,7 +76,6 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 		}
 
 		if itemsLoaded > 0 {
-			log.Printf("node %s is draining, flushing %d items (after for loop)", nd.Name, itemsLoaded)
 			// flush the remaining items in buffer
 			toBeSendFragments <- &DataBlob{
 				BufferedChan: staging,
@@ -99,7 +97,7 @@ func (nd *Node) TotalCopied() int {
 
 func (n *Node) Less(item btree.Item) bool {
 	if n == nil || item == nil {
-		return true
+		panic("comparing node against nil")
 	}
 
 	if nodeItem, ok := item.(*Node); ok {
@@ -126,7 +124,7 @@ type EVObject struct {
 }
 
 // the returning channel doesn't emit anything meaningful, it's simply for synchronization
-func (nd *Node) Run(outC chan<- interface{}, nodeObject *Node, dataBlob *DataBlob) <-chan int {
+func (nd *Node) Run(outC chan<- interface{}, nodeObject *Node) <-chan int {
 	runCh := make(chan int)
 
 	var itemsCopied *int = new(int)
@@ -145,13 +143,13 @@ func (nd *Node) Run(outC chan<- interface{}, nodeObject *Node, dataBlob *DataBlo
 			case <-timeout:
 				// todo: Some data may still in the buffer when timeout.
 				return
-			case item, ok := <-dataBlob.BufferedChan:
+			case item, ok := <-nodeObject.CurrentDataBlob.BufferedChan:
 				if !ok {
 					return
 				}
 				outC <- item
 				*itemsCopied = *itemsCopied + 1
-				dataBlob.Remaining--
+				nodeObject.CurrentDataBlob.Remaining--
 			default:
 				return
 			}
@@ -240,12 +238,12 @@ func main() {
 		<-evObj.Result
 	}
 
-	aLim := 80
-	bLim := 160
-	cLim := 240
-	dLim := 320
-	eLim := 400
-	fLim := 480
+	aLim := 8000000
+	bLim := 16000000
+	cLim := 24000000
+	dLim := 32000000
+	eLim := 40000000
+	fLim := 48000000
 
 	go func() {
 		log.Println("evCenter started")
@@ -298,6 +296,16 @@ func main() {
 					newNode.RegisterDataEvent(evCh, nodeQueue)
 					evRequest.Result <- nil
 				case EVNewDataTask:
+
+					evPayloadNode, ok := evRequest.Payload.(*Node)
+					if !ok {
+						panic("unexpected ev payload, it's not of a type of struct *Node")
+					}
+
+					if nodeQueue.ReplaceOrInsert(evPayloadNode) != nil {
+						panic("the node is already in the queue, which is unexpected")
+					}
+
 					headItem := nodeQueue.DeleteMin()
 					if headItem == nil {
 						panic("head item in the queue shouldn't be nil")
@@ -307,23 +315,15 @@ func main() {
 					if !ok {
 						panic("head item in the queue is not a of type struct Node")
 					}
+					
 
-					dataBlob, ok := evRequest.Payload.(*DataBlob)
-					if !ok {
-						panic("payload of event is not a of type struct DataBlob")
-					}
 
-					log.Printf("node %s event %s, cap: %d, remain: %d", nodeObject.Name, evRequest.Type, dataBlob.Size, dataBlob.Remaining)
-
-					itemsCopied := <-nodeObject.Run(outC, nodeObject, dataBlob)
+					itemsCopied := <-nodeObject.Run(outC, nodeObject)
 					nodeObject.ScheduledTime += 1.0
 					nodeObject.NumItemsCopied[0] = nodeObject.NumItemsCopied[1]
 					nodeObject.NumItemsCopied[1] = nodeObject.NumItemsCopied[2]
 					nodeObject.NumItemsCopied[2] = itemsCopied
 					evRequest.Result <- nil
-
-					// release the queue lock, to enable the node be re-queued again
-					<-nodeObject.queuePending
 
 				default:
 					panic(fmt.Sprintf("unknown event type: %s", evRequest.Type))
@@ -337,16 +337,27 @@ func main() {
 	// consumer goroutine
 	go func() {
 		stat := make(map[string]int)
-		total := 0
+		var total *int = new(int)
+
+		go func() {
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				log.Printf("total muxed: %d", *total)
+
+			}
+		}()
+
 		for muxedItem := range outC {
 			stat[muxedItem.(string)]++
-			total++
-			if total%10 == 0 {
+			*total = *total + 1
+			if *total%1000 == 0 {
 				for k, v := range stat {
-					fmt.Printf("%s: %d, %.2f%%\n", k, v, 100*float64(v)/float64(total))
+					fmt.Printf("%s: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
 				}
 			}
 		}
+
 	}()
 
 	nodeA := add("A", &aLim)
