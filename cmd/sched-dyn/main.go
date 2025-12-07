@@ -58,9 +58,6 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 		itemsLoaded := 0
 		defer log.Printf("node %s is drained", nd.Name)
 
-		// todo: figure out why it just won't reach here
-		defer panic("test not reach here")
-
 		totalItemsProcessed := 0
 
 		staging := make(chan interface{}, defaultChannelBufferSize)
@@ -178,6 +175,9 @@ func anonymousSource(ctx context.Context, content string, limit *int) chan inter
 	outC := make(chan interface{})
 	numItemsCopied := 0
 	go func() {
+		// close source channel to signal the down stream consumers
+		defer close(outC)
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -254,6 +254,8 @@ func main() {
 	}
 
 	aLim := 80000
+	bLim := 160000
+	cLim := 240000
 
 	go func() {
 		log.Println("evCenter started")
@@ -338,7 +340,7 @@ func main() {
 					fmt.Printf("%s: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
 				}
 			}
-			if *total == aLim {
+			if *total == aLim+bLim+cLim {
 				fmt.Println("Final statistics:")
 				for k, v := range stat {
 					fmt.Printf("%s: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
@@ -349,8 +351,12 @@ func main() {
 	}()
 
 	nodeA := add("A", &aLim)
+	nodeB := add("B", &bLim)
+	nodeC := add("C", &cLim)
 
 	addToEvCenter(nodeA)
+	addToEvCenter(nodeB)
+	addToEvCenter(nodeC)
 
 	sig := <-sigs
 	fmt.Println("signal received: ", sig, " exitting...")
