@@ -293,18 +293,18 @@ type TSSchedSourceNode struct {
 
 type TSSchedDataBlob struct {
 	Chunk    []interface{}
-	Capacity int
+	NextRead int
 	Length   int
 }
 
 func (blob *TSSchedDataBlob) CopyTo(dst chan<- interface{}, maximumTimeSlice time.Duration) (numItemsCopied int) {
 	numItemsCopied = 0
 	timeout := time.After(maximumTimeSlice)
-	for numItemsCopied < blob.Length {
+	for numItemsCopied < blob.Length-blob.NextRead {
 		select {
 		case <-timeout:
 			return numItemsCopied
-		case dst <- blob.Chunk[blob.Capacity-blob.Length+numItemsCopied]:
+		case dst <- blob.Chunk[blob.NextRead+numItemsCopied]:
 			numItemsCopied++
 		default:
 			return numItemsCopied
@@ -319,23 +319,23 @@ func streamToChunkedStream(source <-chan interface{}, maximumTimeSlice time.Dura
 	}
 
 	outC := make(chan TSSchedDataBlob)
-	timeout := time.After(maximumTimeSlice)
 	go func() {
 		defer close(outC)
 
 		doFlush := func() TSSchedDataBlob {
 			return TSSchedDataBlob{
 				Chunk:    make([]interface{}, maxChunkSize),
-				Capacity: maxChunkSize,
+				NextRead: 0,
 				Length:   0,
 			}
 		}
 
 		blob := doFlush()
+		ticker := time.NewTicker(maximumTimeSlice)
 
 		for {
 			select {
-			case <-timeout:
+			case <-ticker.C:
 				outC <- blob
 				blob = doFlush()
 			case item, ok := <-source:
@@ -347,7 +347,7 @@ func streamToChunkedStream(source <-chan interface{}, maximumTimeSlice time.Dura
 				}
 				blob.Chunk[blob.Length] = item
 				blob.Length++
-				if blob.Length >= blob.Capacity {
+				if blob.Length >= cap(blob.Chunk) {
 					outC <- blob
 					blob = doFlush()
 				}
@@ -371,7 +371,7 @@ func (nd *TSSchedSourceNode) RegisterDataEvent(
 				continue
 			}
 			blobPtr := &blob
-			for blobPtr.Length > 0 {
+			for blobPtr.NextRead < blobPtr.Length {
 				evSubCh := <-evCh
 				nd.queuePending <- struct{}{}
 				nd.CurrentDataBlob = blobPtr
@@ -430,6 +430,6 @@ func (n *TSSchedSourceNode) Less(item btree.Item) bool {
 // the returning channel doesn't emit anything meaningful, it's simply for synchronization
 func (nd *TSSchedSourceNode) Run(outC chan<- interface{}, nodeObject *TSSchedSourceNode, duration time.Duration) (itemsCopied int) {
 	itemsCopied = nodeObject.CurrentDataBlob.CopyTo(outC, duration)
-	nodeObject.CurrentDataBlob.Length -= itemsCopied
+	nodeObject.CurrentDataBlob.NextRead += itemsCopied
 	return itemsCopied
 }
