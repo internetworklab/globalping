@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"time"
 
 	"github.com/google/btree"
@@ -11,6 +12,21 @@ import (
 
 const defaultTimeSlice time.Duration = 50 * time.Millisecond
 const defaultMaximumChunkSize = 1024
+
+type TSSchedEVType string
+
+const (
+	TSSchedEVNewSource   TSSchedEVType = "new_source"
+	TSSchedEVNewDataTask TSSchedEVType = "new_data_task"
+	TSSchedEVNodeDrained TSSchedEVType = "node_drained"
+	TSSchedEVNewHook     TSSchedEVType = "new_hook"
+)
+
+type TSSchedEVObject struct {
+	Type    TSSchedEVType
+	Payload interface{}
+	Result  chan error
+}
 
 type TimeSlicedEVLoopSched struct {
 	evCh            chan chan TSSchedEVObject
@@ -25,6 +41,9 @@ type TimeSlicedEVLoopSched struct {
 
 	defaultTimeSlice *time.Duration
 	maximumChunkSize int
+
+	// evtype -> hook name -> handler function
+	customEVHandlers map[TSSchedEVType]map[string]func(evObj *TSSchedEVObject) error
 }
 
 type TimeSlicedEVLoopSchedConfig struct {
@@ -45,6 +64,7 @@ func NewTimeSlicedEVLoopSched(config *TimeSlicedEVLoopSchedConfig) (*TimeSlicedE
 		numEventsPassed:  new(int),
 		nodesAdded:       make(map[int]*TSSchedSourceNode),
 		maximumChunkSize: defaultMaximumChunkSize,
+		customEVHandlers: make(map[TSSchedEVType]map[string]func(evObj *TSSchedEVObject) error),
 	}
 	btreeOrder := 2
 	if config.BTreeOrder != nil {
@@ -75,6 +95,45 @@ func NewTimeSlicedEVLoopSched(config *TimeSlicedEVLoopSchedConfig) (*TimeSlicedE
 	return sched, nil
 }
 
+type TSSchedCustomEVHandlerSubmission struct {
+	EVType   TSSchedEVType
+	HookName string
+	Handler  func(evObj *TSSchedEVObject) error
+}
+
+func (tsSched *TimeSlicedEVLoopSched) RegisterCustomEVHandler(ctx context.Context, evType TSSchedEVType, hookName string, handler func(evObj *TSSchedEVObject) error) error {
+	allowedCustomHookEVTypes := []TSSchedEVType{TSSchedEVNodeDrained}
+	if !slices.Contains(allowedCustomHookEVTypes, evType) {
+		return fmt.Errorf("invalid ev type for custom hook: %s, allowed types: %v", evType, allowedCustomHookEVTypes)
+	}
+
+	evSubCh, ok := <-tsSched.evCh
+	if !ok {
+		return fmt.Errorf("ev channel is already closed")
+	}
+
+	evObj := TSSchedEVObject{
+		Type: TSSchedEVNewHook,
+		Payload: TSSchedCustomEVHandlerSubmission{
+			HookName: hookName,
+			Handler:  handler,
+		},
+		Result: make(chan error),
+	}
+
+	evSubCh <- evObj
+
+	select {
+	case err, ok := <-evObj.Result:
+		if !ok {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (tsSched *TimeSlicedEVLoopSched) GetOutput() <-chan interface{} {
 	return tsSched.outC
 }
@@ -101,8 +160,19 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 				log.Printf("Event %s, Generation: %d", evRequest.Type, *numEventsPassed)
 
 				switch evRequest.Type {
+				case TSSchedEVNewHook:
+					evPayloadHook, ok := evRequest.Payload.(TSSchedCustomEVHandlerSubmission)
+					if !ok {
+						panic("unexpected ev payload, it's not of a type of struct TSSchedCustomEVHandlerSubmission")
+					}
+					evType := evPayloadHook.EVType
+					if _, ok := tsSched.customEVHandlers[evType]; !ok {
+						tsSched.customEVHandlers[evType] = make(map[string]func(evObj *TSSchedEVObject) error)
+					}
+					tsSched.customEVHandlers[evType][evPayloadHook.HookName] = evPayloadHook.Handler
+					evRequest.Result <- nil
 				case TSSchedEVNewSource:
-					inputChan, ok := evRequest.Payload.(<-chan interface{})
+					inputChanSubmission, ok := evRequest.Payload.(*TSSchedInputChanSubmission)
 					if !ok {
 						panic("unexpected ev payload, it's not of a type of <-chan interface{}")
 					}
@@ -110,14 +180,15 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 					newNodeId := len(tsSched.nodesAdded)
 					newNodeObject := &TSSchedSourceNode{
 						Id:              newNodeId,
-						InC:             inputChan,
+						InC:             inputChanSubmission.InputChan,
 						ScheduledTime:   0.0,
 						queuePending:    make(chan interface{}, 1),
 						NumItemsCopied:  make([]int, 3),
 						CurrentDataBlob: nil,
 					}
+					inputChanSubmission.OpaqueId = newNodeId
 					tsSched.nodesAdded[newNodeId] = newNodeObject
-					log.Printf("Added node %d to evCenter", newNodeId)
+
 					newNodeObject.RegisterDataEvent(tsSched.evCh, tsSched.nodeQueue, tsSched.maximumChunkSize)
 					evRequest.Result <- nil
 				case TSSchedEVNewDataTask:
@@ -157,11 +228,29 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 					if nodeIsDead {
 						nodeObject.Dead = true
 						delete(tsSched.nodesAdded, nodeObject.Id)
-						log.Printf("node %d is drained, removing from the queue", nodeObject.Id)
+
+						go func() {
+							evSubCh, ok := <-tsSched.evCh
+							if !ok {
+								return
+							}
+							evObj := TSSchedEVObject{
+								Type:    TSSchedEVNodeDrained,
+								Payload: nodeObject.Id,
+								Result:  make(chan error),
+							}
+							evSubCh <- evObj
+							<-evObj.Result
+						}()
 					}
 
 					evRequest.Result <- nil
-
+				case TSSchedEVNodeDrained:
+					if handlers, ok := tsSched.customEVHandlers[TSSchedEVNodeDrained]; ok {
+						for _, handler := range handlers {
+							handler(&evRequest)
+						}
+					}
 				default:
 					panic(fmt.Sprintf("unknown event type: %s", evRequest.Type))
 				}
@@ -171,27 +260,37 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 	return errorChan
 }
 
-func (tsSched *TimeSlicedEVLoopSched) AddInput(ctx context.Context, inputChan <-chan interface{}) error {
+type TSSchedInputChanSubmission struct {
+	InputChan <-chan interface{}
+	OpaqueId  int
+}
+
+// returns: (opaque-source-id interface{}, err error)
+func (tsSched *TimeSlicedEVLoopSched) AddInput(ctx context.Context, inputChan <-chan interface{}) (interface{}, error) {
 	evSubCh, ok := <-tsSched.evCh
 	if !ok {
-		return fmt.Errorf("ev channel is already closed")
+		return nil, fmt.Errorf("ev channel is already closed")
 	}
 	defer close(evSubCh)
 
+	submission := &TSSchedInputChanSubmission{
+		InputChan: inputChan,
+	}
+
 	evObj := TSSchedEVObject{
 		Type:    TSSchedEVNewSource,
-		Payload: inputChan,
+		Payload: submission,
 		Result:  make(chan error),
 	}
 	evSubCh <- evObj
 	select {
 	case err, ok := <-evObj.Result:
-		if !ok {
-			return nil
+		if !ok || err == nil {
+			return submission.OpaqueId, nil
 		}
-		return err
+		return nil, err
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 
@@ -240,8 +339,6 @@ func (nd *TSSchedSourceNode) RegisterDataEvent(
 
 	go func() {
 		itemsLoaded := 0
-		defer log.Printf("node %d is drained", nd.Id)
-
 		totalItemsProcessed := 0
 
 		staging := make(chan interface{}, maximumChunkSize)
@@ -250,7 +347,6 @@ func (nd *TSSchedSourceNode) RegisterDataEvent(
 			totalItemsProcessed++
 
 			if len(temporaryBuf) > 0 {
-				fmt.Println("flushing temporaryBuf: ", len(temporaryBuf))
 				for _, item := range temporaryBuf {
 					staging <- item
 					itemsLoaded++
@@ -281,8 +377,6 @@ func (nd *TSSchedSourceNode) RegisterDataEvent(
 			}
 			itemsLoaded = 0
 		}
-
-		fmt.Println("total items processed: ", totalItemsProcessed)
 	}()
 }
 
@@ -307,19 +401,6 @@ func (n *TSSchedSourceNode) Less(item btree.Item) bool {
 	}
 
 	panic(fmt.Sprintf("comparing node with unexpected item type: %T", item))
-}
-
-type TSSchedEVType string
-
-const (
-	TSSchedEVNewSource   TSSchedEVType = "new_source"
-	TSSchedEVNewDataTask TSSchedEVType = "new_data_task"
-)
-
-type TSSchedEVObject struct {
-	Type    TSSchedEVType
-	Payload interface{}
-	Result  chan error
 }
 
 // the returning channel doesn't emit anything meaningful, it's simply for synchronization

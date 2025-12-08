@@ -10,7 +10,8 @@ import (
 // the user is free to design its own struct for wrapping packets to make them tagged.
 // For example, a packet of interface{} could be a MySimpleWrappedPacket{OriginPacket: xxx, Label: yyy}
 type GenericMISOScheduler interface {
-	AddInput(ctx context.Context, inputChan <-chan interface{}) error
+	// returns: (opaque-source-id interface{}, err error)
+	AddInput(ctx context.Context, inputChan <-chan interface{}) (interface{}, error)
 	GetOutput() <-chan interface{}
 }
 

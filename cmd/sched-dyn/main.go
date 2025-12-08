@@ -36,16 +36,18 @@ func anonymousSource(ctx context.Context, symbol int, limit *int) chan interface
 	return outC
 }
 
-func add(ctx context.Context, symbol int, limit *int, evCenter *pkgthrottle.TimeSlicedEVLoopSched) {
+func add(ctx context.Context, symbol int, limit *int, evCenter *pkgthrottle.TimeSlicedEVLoopSched) interface{} {
 
 	dataSource := anonymousSource(ctx, symbol, limit)
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	if err := evCenter.AddInput(ctx, dataSource); err != nil {
+	opaqueNodeId, err := evCenter.AddInput(ctx, dataSource)
+	if err != nil {
 		log.Fatalf("failed to add input to evCenter: %v", err)
 	}
+	return opaqueNodeId
 }
 
 func main() {
@@ -68,9 +70,9 @@ func main() {
 	var numEventsPassed *int = new(int)
 	*numEventsPassed = 0
 
-	aLim := 8000000
-	bLim := 16000000
-	cLim := 24000000
+	aLim := 80000
+	bLim := 160000
+	cLim := 240000
 
 	// consumer goroutine
 	go func() {
@@ -103,9 +105,25 @@ func main() {
 
 	}()
 
-	add(ctx, 1, &aLim, evCenter)
-	add(ctx, 2, &bLim, evCenter)
-	add(ctx, 3, &cLim, evCenter)
+	evCenter.RegisterCustomEVHandler(ctx, pkgthrottle.TSSchedEVNodeDrained, "node_drained", func(evObj *pkgthrottle.TSSchedEVObject) error {
+
+		nodeId, ok := evObj.Payload.(int)
+		if !ok {
+			panic("unexpected ev payload, it's not of a type of int")
+		}
+
+		log.Printf("node %d is drained", nodeId)
+
+		evObj.Result <- nil
+		return nil
+	})
+
+	opaqueNodeId := add(ctx, 1, &aLim, evCenter)
+	log.Printf("node %v is added", opaqueNodeId)
+	opaqueNodeId = add(ctx, 2, &bLim, evCenter)
+	log.Printf("node %v is added", opaqueNodeId)
+	opaqueNodeId = add(ctx, 3, &cLim, evCenter)
+	log.Printf("node %v is added", opaqueNodeId)
 
 	sig := <-sigs
 	fmt.Println("signal received: ", sig, " exitting...")
