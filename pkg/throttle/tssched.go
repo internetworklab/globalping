@@ -292,9 +292,70 @@ type TSSchedSourceNode struct {
 }
 
 type TSSchedDataBlob struct {
-	BufferedChan chan interface{}
-	Size         int
-	Remaining    int
+	Chunk    []interface{}
+	Capacity int
+	Length   int
+}
+
+func (blob *TSSchedDataBlob) CopyTo(dst chan<- interface{}, maximumTimeSlice time.Duration) (numItemsCopied int) {
+	numItemsCopied = 0
+	timeout := time.After(maximumTimeSlice)
+	for numItemsCopied < blob.Length {
+		select {
+		case <-timeout:
+			return numItemsCopied
+		case dst <- blob.Chunk[blob.Capacity-blob.Length+numItemsCopied]:
+			numItemsCopied++
+		default:
+			return numItemsCopied
+		}
+	}
+	return numItemsCopied
+}
+
+func streamToChunkedStream(source <-chan interface{}, maximumTimeSlice time.Duration, maxChunkSize int) <-chan TSSchedDataBlob {
+	if maxChunkSize < 1 {
+		panic("max chunk size must be at least 1")
+	}
+
+	outC := make(chan TSSchedDataBlob)
+	timeout := time.After(maximumTimeSlice)
+	go func() {
+		defer close(outC)
+
+		doFlush := func() TSSchedDataBlob {
+			return TSSchedDataBlob{
+				Chunk:    make([]interface{}, maxChunkSize),
+				Capacity: maxChunkSize,
+				Length:   0,
+			}
+		}
+
+		blob := doFlush()
+
+		for {
+			select {
+			case <-timeout:
+				outC <- blob
+				blob = doFlush()
+			case item, ok := <-source:
+				if !ok {
+					// source is drained
+					outC <- blob
+					blob = doFlush()
+					return
+				}
+				blob.Chunk[blob.Length] = item
+				blob.Length++
+				if blob.Length >= blob.Capacity {
+					outC <- blob
+					blob = doFlush()
+				}
+			}
+		}
+	}()
+
+	return outC
 }
 
 func (nd *TSSchedSourceNode) RegisterDataEvent(
@@ -303,14 +364,17 @@ func (nd *TSSchedSourceNode) RegisterDataEvent(
 	maximumChunkSize int,
 	maximumTimeSlice time.Duration,
 ) {
-	toBeSendFragments := make(chan *TSSchedDataBlob)
-
 	go func() {
-		for dataBlob := range toBeSendFragments {
-			for dataBlob.Remaining > 0 {
+		for blob := range streamToChunkedStream(nd.InC, maximumTimeSlice, maximumChunkSize) {
+			if blob.Length <= 0 {
+				// skip null chunk
+				continue
+			}
+			blobPtr := &blob
+			for blobPtr.Length > 0 {
 				evSubCh := <-evCh
 				nd.queuePending <- struct{}{}
-				nd.CurrentDataBlob = dataBlob
+				nd.CurrentDataBlob = blobPtr
 				evObj := TSSchedEVObject{
 					Type:    TSSchedEVNewDataTask,
 					Payload: nd,
@@ -322,65 +386,6 @@ func (nd *TSSchedSourceNode) RegisterDataEvent(
 
 				<-nd.queuePending
 			}
-		}
-	}()
-
-	go func() {
-		itemsLoaded := 0
-		totalItemsProcessed := 0
-
-		staging := make(chan interface{}, maximumChunkSize)
-		temporaryBuf := make([]interface{}, 0)
-
-		type lastItemWrapT struct {
-			data interface{}
-		}
-
-		doFlush := func(lastItem *lastItemWrapT) (newItemsLoaded int, newStagingBuf chan interface{}) {
-			newItemsLoaded = 0
-			newStagingBuf = make(chan interface{}, maximumChunkSize)
-
-			if lastItem != nil {
-				temporaryBuf = append(temporaryBuf, lastItem.data)
-			}
-
-			toBeSendFragments <- &TSSchedDataBlob{
-				BufferedChan: staging,
-				Size:         itemsLoaded,
-				Remaining:    itemsLoaded,
-			}
-
-			return newItemsLoaded, newStagingBuf
-		}
-
-		sliceTicker := time.NewTicker(maximumTimeSlice)
-		defer sliceTicker.Stop()
-
-		for item := range nd.InC {
-			totalItemsProcessed++
-			if len(temporaryBuf) > 0 {
-				for _, item := range temporaryBuf {
-					staging <- item
-					itemsLoaded++
-				}
-				temporaryBuf = make([]interface{}, 0)
-			}
-
-			select {
-			case staging <- item:
-				itemsLoaded++
-			case <-sliceTicker.C:
-				// flush because run out of time slice
-				itemsLoaded, staging = doFlush(&lastItemWrapT{data: item})
-			default:
-				// flush because the staging buffer is full-filled
-				itemsLoaded, staging = doFlush(&lastItemWrapT{data: item})
-			}
-		}
-
-		if itemsLoaded > 0 {
-			// flush because the source is drained
-			itemsLoaded, staging = doFlush(nil)
 		}
 
 		go func() {
@@ -424,25 +429,7 @@ func (n *TSSchedSourceNode) Less(item btree.Item) bool {
 
 // the returning channel doesn't emit anything meaningful, it's simply for synchronization
 func (nd *TSSchedSourceNode) Run(outC chan<- interface{}, nodeObject *TSSchedSourceNode, duration time.Duration) (itemsCopied int) {
-
-	itemsCopied = 0
-
-	timeout := time.After(duration)
-
-	for {
-		select {
-		case <-timeout:
-			// todo: Some data may still in the buffer when timeout.
-			return itemsCopied
-		case item, ok := <-nodeObject.CurrentDataBlob.BufferedChan:
-			if !ok {
-				return itemsCopied
-			}
-			outC <- item
-			itemsCopied = itemsCopied + 1
-			nodeObject.CurrentDataBlob.Remaining--
-		default:
-			return itemsCopied
-		}
-	}
+	itemsCopied = nodeObject.CurrentDataBlob.CopyTo(outC, duration)
+	nodeObject.CurrentDataBlob.Length -= itemsCopied
+	return itemsCopied
 }
