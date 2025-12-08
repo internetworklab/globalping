@@ -15,11 +15,6 @@ type GenericMISOScheduler interface {
 	GetOutput() <-chan interface{}
 }
 
-type MISOMuxer interface {
-	AddInput(inputChan <-chan interface{}, label string) error
-	GetOutput() <-chan interface{}
-}
-
 type SIMODemuxer interface {
 	AddOutput(outputChan chan<- interface{}, labelPattern string, labelBindingName string) error
 	RemoveOutput(labelBindingName string) error

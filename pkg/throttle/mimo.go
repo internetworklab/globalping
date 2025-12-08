@@ -5,41 +5,58 @@ package throttle
 
 import (
 	"context"
+	"sync"
 )
+
+type MIMOPacketizedItem struct {
+	Label string
+	Datum interface{}
+}
 
 // Multiple inputs, multiple outputs scheduler
 type MIMOScheduler struct {
-	config *MIMOSchedConfig
+	config         *MIMOSchedConfig
+	outputBindings sync.Map
+	DefaultOutC    chan interface{}
 }
 
 type MIMOSchedConfig struct {
 	Middlewares []SISOPipe
-
-	Muxer   MISOMuxer
-	Demuxer SIMODemuxer
+	Muxer       GenericMISOScheduler
 }
 
 func NewMIMOScheduler(config *MIMOSchedConfig) *MIMOScheduler {
 	mimoSched := &MIMOScheduler{
-		config: config,
+		config:         config,
+		DefaultOutC:    make(chan interface{}),
+		outputBindings: sync.Map{},
 	}
 	return mimoSched
 }
 
 // AddInput adds a new labeled input channel to the source chain.
-func (mimoSched *MIMOScheduler) AddInput(inputChan <-chan interface{}, label string) error {
-	return mimoSched.config.Muxer.AddInput(inputChan, label)
+func (mimoSched *MIMOScheduler) AddInput(ctx context.Context, inputChan <-chan interface{}, label string) (opaqueNodeId interface{}, err error) {
+	wrappedPktCh := make(chan interface{})
+	go func() {
+		defer close(wrappedPktCh)
+		for pkt := range inputChan {
+			wrappedPktCh <- MIMOPacketizedItem{Label: label, Datum: pkt}
+		}
+	}()
+	return mimoSched.config.Muxer.AddInput(ctx, wrappedPktCh)
 }
 
 // AddOutput expresses an interest about a specific set of packets tagged with a specific label pattern.
 // Note: outputChan should be buffered if you want to allow downstream processing to be slow.
-func (mimoSched *MIMOScheduler) AddOutput(outputChan chan<- interface{}, labelPattern string, labelBindingName string) error {
-	return mimoSched.config.Demuxer.AddOutput(outputChan, labelPattern, labelBindingName)
+func (mimoSched *MIMOScheduler) AddOutput(outputChan chan interface{}, label string) error {
+	mimoSched.outputBindings.Store(label, outputChan)
+	return nil
 }
 
 // RemoveOutput removes a specific labeled output binding.
-func (mimoSched *MIMOScheduler) RemoveOutput(labelBindingName string) error {
-	return mimoSched.config.Demuxer.RemoveOutput(labelBindingName)
+func (mimoSched *MIMOScheduler) RemoveOutput(label string) error {
+	mimoSched.outputBindings.Delete(label)
+	return nil
 }
 
 // Run executes the scheduler, setting up the entire pipeline.
@@ -51,11 +68,34 @@ func (mimoSched *MIMOScheduler) Run(ctx context.Context) {
 		ch = WrapWithSISOPipe(ch, middleware)
 	}
 
-	nextCh := mimoSched.config.Demuxer.GetInput()
-
 	go func() {
-		for pkt := range ch {
-			nextCh <- pkt
+		defer close(mimoSched.DefaultOutC)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case packetraw, ok := <-ch:
+				if !ok {
+					return
+				}
+				packet, ok := packetraw.(MIMOPacketizedItem)
+				if !ok {
+					panic("unexpected item type, it's not of a type of MIMOPacketizedItem")
+				}
+
+				nexthopUnknown, ok := mimoSched.outputBindings.Load(packet.Label)
+				if ok {
+					nexthop, ok := nexthopUnknown.(chan interface{})
+					if !ok {
+						panic("unexpected item type, it's not of a type of chan interface{}")
+					}
+					nexthop <- packet.Datum
+					continue
+				}
+
+				mimoSched.DefaultOutC <- packet.Datum
+			}
 		}
 	}()
 

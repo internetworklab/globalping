@@ -148,13 +148,14 @@ func (hub *SharedThrottleHub) GetProxy() SharedThrottleProxy {
 	<-request.Result
 
 	hubEntry.labelKey = fmt.Sprintf("%d", *handlerId)
-	err := hub.mimoSched.AddInput(hubEntry.In, hubEntry.labelKey)
+	ctx := context.TODO()
+	_, err := hub.mimoSched.AddInput(ctx, hubEntry.In, hubEntry.labelKey)
 	if err != nil {
 		panic(fmt.Sprintf("failed to add input to mimo scheduler: %v", err))
 	}
 
 	hubEntry.smoothedInChan = make(chan interface{})
-	err = hub.mimoSched.AddOutput(hubEntry.smoothedInChan, hubEntry.labelKey, hubEntry.labelKey)
+	err = hub.mimoSched.AddOutput(hubEntry.smoothedInChan, hubEntry.labelKey)
 	if err != nil {
 		panic(fmt.Sprintf("failed to add output to mimo scheduler: %v", err))
 	}
