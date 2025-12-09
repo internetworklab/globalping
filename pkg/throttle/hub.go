@@ -8,7 +8,7 @@ package throttle
 import (
 	"context"
 	"fmt"
-	"time"
+	"log"
 )
 
 type ServiceRequest struct {
@@ -68,7 +68,9 @@ func (hub *SharedThrottleHub) Run(ctx context.Context) {
 // Note:
 // inChan: user sends, we read
 // outChan: we send, user reads
-func (hub *SharedThrottleHub) CreateProxy(inChan <-chan interface{}) (outChan chan interface{}, err error) {
+// ctx: serve as a control handle so that user can stop the goroutines and reclaim the resources
+// (ctx is better to be cancallable)
+func (hub *SharedThrottleHub) CreateProxy(ctx context.Context, inChan <-chan interface{}) (outChan chan interface{}, err error) {
 	requestCh, ok := <-hub.serviceChan
 	if !ok {
 		// the hub is already shutdown
@@ -91,37 +93,49 @@ func (hub *SharedThrottleHub) CreateProxy(inChan <-chan interface{}) (outChan ch
 		Result: make(chan error),
 	}
 	requestCh <- request
-	<-request.Result
+	err = <-request.Result
+	if err != nil {
+		return nil, fmt.Errorf("failed to create proxy to the hub: %v", err)
+	}
 
 	labelKey := fmt.Sprintf("%d", *handlerId)
 
-	ctx := context.TODO()
 	wrappedInChan := make(chan interface{})
 
-	func() {
-		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
-
-		_, err := hub.mimoSched.AddInput(ctx, wrappedInChan, labelKey)
-		if err != nil {
-			panic(fmt.Sprintf("failed to add input to mimo scheduler: %v", err))
-		}
-	}()
+	_, err = hub.mimoSched.AddInput(ctx, wrappedInChan, labelKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add input to mimo scheduler: %v", err)
+	}
 
 	smoothedInChan := make(chan interface{})
 	err = hub.mimoSched.AddOutput(smoothedInChan, labelKey)
 	if err != nil {
-		panic(fmt.Sprintf("failed to add output to mimo scheduler: %v", err))
+		return nil, fmt.Errorf("failed to add output to mimo scheduler: %v", err)
 	}
 
 	outChan = make(chan interface{})
 	go func() {
-		for pktIn := range smoothedInChan {
-			outChan <- pktIn
+		defer close(outChan)
+		defer log.Printf("[DBG] proxy goroutine for label %s closed", labelKey)
+
+		for {
+			select {
+			case <-ctx.Done():
+				// the smoothedInChan is never gonna be closed it self
+				// because it is the output of a long-running muxer
+				return
+			case pktIn, ok := <-smoothedInChan:
+				if !ok {
+					// but still consider such case might happen
+					return
+				}
+				outChan <- pktIn
+			}
 		}
 	}()
 
 	go func() {
+		// this goroutine would be automatically closed once the inChan is depleted
 		defer close(wrappedInChan)
 		for pktIn := range inChan {
 			wrappedInChan <- pktIn

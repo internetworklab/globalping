@@ -12,18 +12,75 @@ import (
 	pkgthrottle "example.com/rbmq-demo/pkg/throttle"
 )
 
-func generateData(N int, prefix string) chan interface{} {
+type SimplePacket struct {
+	Class string
+	Seq   int
+}
+
+func (sp SimplePacket) String() string {
+	return fmt.Sprintf("SimplePacket{Class: %s, Seq: %d}", sp.Class, sp.Seq)
+}
+
+func generateData(N int, symbol string) chan interface{} {
 	dataChan := make(chan interface{})
 	go func() {
-		log.Printf("[DBG] generateData %s started", prefix)
 		defer close(dataChan)
-		defer log.Printf("[DBG] generateData %s closed", prefix)
+		defer log.Printf("[DBG] generateData %s closed", symbol)
 		for i := 0; i < N; i++ {
-			dataChan <- fmt.Sprintf("%s%03d", prefix, i)
+			dataChan <- SimplePacket{Class: symbol, Seq: i}
 			time.Sleep(50 * time.Millisecond)
 		}
 	}()
 	return dataChan
+}
+
+func runTestSession(
+	ctx context.Context,
+	hub *pkgthrottle.SharedThrottleHub,
+	symbol string,
+	sampleSize int,
+) chan error {
+	errCh := make(chan error, 1)
+
+	sourceCh := generateData(sampleSize, symbol)
+
+	go func() {
+		defer func() {
+			errCh <- nil
+		}()
+
+		proxySubCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		proxyCh, err := hub.CreateProxy(proxySubCtx, sourceCh)
+		if err != nil {
+			errCh <- err
+			return
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case item, ok := <-proxyCh:
+				if !ok {
+					return
+				}
+				pkt, ok := item.(SimplePacket)
+				if !ok {
+					panic("unexpected item type, it's not of a type of SimplePacket")
+				}
+				fmt.Printf("[%s] %s\n", time.Now().Format(time.RFC3339Nano), pkt)
+				if pkt.Seq == sampleSize-1 {
+					// last packet received, cleanup everything
+					log.Printf("last packet of symbol %s received, cleanup everything", symbol)
+					cancel()
+				}
+			}
+		}
+	}()
+
+	return errCh
 }
 
 func main() {
@@ -55,57 +112,11 @@ func main() {
 
 	hub.Run(ctx)
 
-	source1 := generateData(20, "A")
-	source2 := generateData(20, "B")
-	source3 := generateData(20, "C")
-	source4 := generateData(20, "D")
-
-	proxy1, err := hub.CreateProxy(source1)
-	if err != nil {
-		log.Fatalf("failed to create proxy: %v", err)
-	}
-
-	proxy2, err := hub.CreateProxy(source2)
-	if err != nil {
-		log.Fatalf("failed to create proxy: %v", err)
-	}
-
-	proxy3, err := hub.CreateProxy(source3)
-	if err != nil {
-		log.Fatalf("failed to create proxy: %v", err)
-	}
-
-	proxy4, err := hub.CreateProxy(source4)
-	if err != nil {
-		log.Fatalf("failed to create proxy: %v", err)
-	}
-
-	go func() {
-		for {
-			select {
-			case item, ok := <-proxy1:
-				if !ok {
-					continue
-				}
-				fmt.Println("proxy1: ", item)
-			case item, ok := <-proxy2:
-				if !ok {
-					continue
-				}
-				fmt.Println("proxy2: ", item)
-			case item, ok := <-proxy3:
-				if !ok {
-					continue
-				}
-				fmt.Println("proxy3: ", item)
-			case item, ok := <-proxy4:
-				if !ok {
-					continue
-				}
-				fmt.Println("proxy4: ", item)
-			}
-		}
-	}()
+	sampleSize := 20
+	errChan1 := runTestSession(ctx, hub, "A", sampleSize)
+	errChan2 := runTestSession(ctx, hub, "B", sampleSize)
+	errChan3 := runTestSession(ctx, hub, "C", sampleSize)
+	errChan4 := runTestSession(ctx, hub, "D", sampleSize)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -116,5 +127,23 @@ func main() {
 	err = <-tsSchedRunerr
 	if err != nil {
 		log.Fatalf("failed to run time sliced event loop scheduler: %v", err)
+	}
+
+	log.Printf("waiting run sessions to finish ...")
+	err = <-errChan1
+	if err != nil {
+		log.Fatalf("failed to run test session for symbol A: %v", err)
+	}
+	err = <-errChan2
+	if err != nil {
+		log.Fatalf("failed to run test session for symbol B: %v", err)
+	}
+	err = <-errChan3
+	if err != nil {
+		log.Fatalf("failed to run test session for symbol C: %v", err)
+	}
+	err = <-errChan4
+	if err != nil {
+		log.Fatalf("failed to run test session for symbol D: %v", err)
 	}
 }
