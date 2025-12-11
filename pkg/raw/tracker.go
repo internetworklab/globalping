@@ -111,6 +111,7 @@ func (it *ICMPTracker) Run(ctx context.Context) {
 }
 
 func (it *ICMPTracker) cleanupEntry(seq int) {
+	// log.Printf("[DBG] clean up outdated entry for seq: %d, store: %+v", seq, it.store)
 	requestCh, ok := <-it.serviceChan
 	if !ok {
 		// engine is already shutdown
@@ -127,6 +128,9 @@ func (it *ICMPTracker) cleanupEntry(seq int) {
 		Result: make(chan error),
 	}
 	requestCh <- req
+
+	// log.Printf("[DBG] outdated entry for seq %d has been cleaned: store: %+v", seq, it.store)
+
 	err := <-req.Result
 	if err != nil {
 		log.Printf("failed to cleanup entry for seq %d: %v", seq, err)
@@ -219,6 +223,7 @@ func (it *ICMPTracker) MarkSent(seq int) error {
 	fn := func(ctx context.Context) error {
 
 		ent := &ICMPTrackerEntry{
+			Seq:    seq,
 			SentAt: time.Now(),
 			Timer:  time.NewTimer(it.pktTimeout),
 		}

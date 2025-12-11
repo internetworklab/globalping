@@ -56,10 +56,14 @@ func main() {
 			{Seq: 1, RTT: 1000 * time.Millisecond},
 			{Seq: 2, RTT: 1000 * time.Millisecond},
 			{Seq: 3, RTT: 1000 * time.Millisecond},
+			{Seq: 4, RTT: 3500 * time.Millisecond},
+			{Seq: 5, RTT: 3500 * time.Millisecond},
+			{Seq: 6, RTT: 1000 * time.Millisecond},
 		}
 
 		for _, mockPing := range mockPings {
 			mockPing.Run(tracker)
+			<-time.After(mockPing.RTT)
 		}
 
 	}()
