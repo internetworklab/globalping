@@ -62,6 +62,7 @@ type ICMP4Transceiver struct {
 func NewICMP4Transceiver(config ICMP4TransceiverConfig) (*ICMP4Transceiver, error) {
 
 	tracer := &ICMP4Transceiver{
+		id:         config.ID,
 		SendC:      make(chan ICMPSendRequest),
 		ReceiveC:   make(chan chan ICMPReceiveReply),
 		pktTimeout: config.PktTimeout,
@@ -120,61 +121,63 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 				case <-ctx.Done():
 					return
 				case replysSubCh := <-icmp4tr.ReceiveC:
+					for {
+						err := icmp4tr.ipv4PacketConn.SetReadDeadline(time.Now().Add(icmp4tr.pktTimeout))
+						if err != nil {
+							log.Fatalf("failed to set read deadline: %v", err)
+						}
+						nBytes, ctrlMsg, peerAddr, err := icmp4tr.ipv4PacketConn.ReadFrom(rb)
+						if err != nil {
+							if err, ok := err.(net.Error); ok && err.Timeout() {
+								log.Printf("timeout reading from connection, skipping")
+								continue
+							}
+							log.Fatalf("failed to read from connection: %v", err)
+						}
+						receiveMsg, err := icmp.ParseMessage(ipv4.ICMPTypeEchoReply.Protocol(), rb[:nBytes])
+						if err != nil {
+							log.Fatalf("failed to parse icmp message: %v", err)
+						}
 
-					err := icmp4tr.ipv4PacketConn.SetReadDeadline(time.Now().Add(icmp4tr.pktTimeout))
-					if err != nil {
-						log.Fatalf("failed to set read deadline: %v", err)
-					}
-					nBytes, ctrlMsg, peerAddr, err := icmp4tr.ipv4PacketConn.ReadFrom(rb)
-					if err != nil {
-						if err, ok := err.(net.Error); ok && err.Timeout() {
-							log.Printf("timeout reading from connection, skipping")
+						receivedAt := time.Now()
+						replyObject := ICMPReceiveReply{
+							ID:         icmp4tr.id,
+							Size:       nBytes,
+							ReceivedAt: receivedAt,
+							Peer:       peerAddr.Network() + ":" + peerAddr.String(),
+							TTL:        ctrlMsg.TTL,
+							Seq:        -1, // if can't determine, use -1
+						}
+
+						icmpBody, ok := receiveMsg.Body.(*icmp.Echo)
+						if !ok {
+							log.Printf("failed to parse icmp body: %+v", receiveMsg)
 							continue
 						}
-						log.Fatalf("failed to read from connection: %v", err)
-					}
-					receiveMsg, err := icmp.ParseMessage(ipv4.ICMPTypeEchoReply.Protocol(), rb[:nBytes])
-					if err != nil {
-						log.Fatalf("failed to parse icmp message: %v", err)
-					}
 
-					receivedAt := time.Now()
-					replyObject := ICMPReceiveReply{
-						ID:         icmp4tr.id,
-						Size:       nBytes,
-						ReceivedAt: receivedAt,
-						Peer:       peerAddr.Network() + ":" + peerAddr.String(),
-						TTL:        ctrlMsg.TTL,
-						Seq:        -1, // if can't determine, use -1
-					}
+						if icmpBody.ID != icmp4tr.id {
+							// silently ignore the message that is not for us
+							continue
+						}
 
-					icmpBody, ok := receiveMsg.Body.(*icmp.Echo)
-					if !ok {
-						log.Printf("failed to parse icmp body: %+v", receiveMsg)
-						continue
-					}
+						replyObject.Seq = icmpBody.Seq
+						var ty ipv4.ICMPType
 
-					if icmpBody.ID != icmp4tr.id {
-						// silently ignore the message that is not for us
-						continue
-					}
+						switch receiveMsg.Type {
+						case ipv4.ICMPTypeTimeExceeded:
+							ty = ipv4.ICMPTypeTimeExceeded
+							replyObject.ICMPTypeV4 = &ty
+						case ipv4.ICMPTypeEchoReply:
+							ty = ipv4.ICMPTypeEchoReply
+						default:
+							log.Printf("unknown ICMP message: %+v", receiveMsg)
+							continue
+						}
 
-					replyObject.Seq = icmpBody.Seq
-					var ty ipv4.ICMPType
-
-					switch receiveMsg.Type {
-					case ipv4.ICMPTypeTimeExceeded:
-						ty = ipv4.ICMPTypeTimeExceeded
 						replyObject.ICMPTypeV4 = &ty
-					case ipv4.ICMPTypeEchoReply:
-						ty = ipv4.ICMPTypeEchoReply
-					default:
-						log.Printf("unknown ICMP message: %+v", receiveMsg)
-						continue
+						replysSubCh <- replyObject
+						break
 					}
-
-					replyObject.ICMPTypeV4 = &ty
-					replysSubCh <- replyObject
 				}
 			}
 		}()
@@ -242,6 +245,7 @@ type ICMP6Transceiver struct {
 func NewICMP6Transceiver(config ICMP6TransceiverConfig) (*ICMP6Transceiver, error) {
 
 	tracer := &ICMP6Transceiver{
+		id:         config.ID,
 		SendC:      make(chan ICMPSendRequest),
 		ReceiveC:   make(chan chan ICMPReceiveReply),
 		pktTimeout: config.PktTimeout,
@@ -292,59 +296,63 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 				case <-ctx.Done():
 					return
 				case replySubCh := <-icmp6tr.ReceiveC:
-					err := icmp6tr.ipv6PacketConn.SetReadDeadline(time.Now().Add(icmp6tr.pktTimeout))
-					if err != nil {
-						log.Fatalf("failed to set read deadline: %v", err)
-					}
-					nBytes, ctrlMsg, peerAddr, err := icmp6tr.ipv6PacketConn.ReadFrom(rb)
-					if err != nil {
-						if err, ok := err.(net.Error); ok && err.Timeout() {
-							log.Printf("timeout reading from connection, skipping")
+					for {
+						err := icmp6tr.ipv6PacketConn.SetReadDeadline(time.Now().Add(icmp6tr.pktTimeout))
+						if err != nil {
+							log.Fatalf("failed to set read deadline: %v", err)
+						}
+
+						nBytes, ctrlMsg, peerAddr, err := icmp6tr.ipv6PacketConn.ReadFrom(rb)
+						if err != nil {
+							if err, ok := err.(net.Error); ok && err.Timeout() {
+								log.Printf("timeout reading from connection, skipping")
+								continue
+							}
+							log.Fatalf("failed to read from connection: %v", err)
+						}
+						receiveMsg, err := icmp.ParseMessage(ipv6.ICMPTypeEchoReply.Protocol(), rb[:nBytes])
+						if err != nil {
+							log.Fatalf("failed to parse icmp message: %v", err)
+						}
+
+						receivedAt := time.Now()
+						replyObject := ICMPReceiveReply{
+							ID:         icmp6tr.id,
+							Size:       nBytes,
+							ReceivedAt: receivedAt,
+							Peer:       peerAddr.Network() + ":" + peerAddr.String(),
+							TTL:        ctrlMsg.HopLimit,
+							Seq:        -1, // if can't determine, use -1
+						}
+
+						icmpBody, ok := receiveMsg.Body.(*icmp.Echo)
+						if !ok {
+							log.Printf("failed to parse icmp body: %+v", receiveMsg)
 							continue
 						}
-						log.Fatalf("failed to read from connection: %v", err)
-					}
-					receiveMsg, err := icmp.ParseMessage(ipv6.ICMPTypeEchoReply.Protocol(), rb[:nBytes])
-					if err != nil {
-						log.Fatalf("failed to parse icmp message: %v", err)
-					}
 
-					receivedAt := time.Now()
-					replyObject := ICMPReceiveReply{
-						ID:         icmp6tr.id,
-						Size:       nBytes,
-						ReceivedAt: receivedAt,
-						Peer:       peerAddr.Network() + ":" + peerAddr.String(),
-						TTL:        ctrlMsg.HopLimit,
-						Seq:        -1, // if can't determine, use -1
+						if icmpBody.ID != icmp6tr.id {
+							// silently ignore the message that is not for us
+							continue
+						}
+
+						replyObject.Seq = icmpBody.Seq
+						var ty ipv6.ICMPType
+
+						switch receiveMsg.Type {
+						case ipv6.ICMPTypeTimeExceeded:
+							ty = ipv6.ICMPTypeTimeExceeded
+						case ipv6.ICMPTypeEchoReply:
+							ty = ipv6.ICMPTypeEchoReply
+						default:
+							log.Printf("unknown ICMP message: %+v", receiveMsg)
+							continue
+						}
+
+						replyObject.ICMPTypeV6 = &ty
+						replySubCh <- replyObject
+						break
 					}
-
-					icmpBody, ok := receiveMsg.Body.(*icmp.Echo)
-					if !ok {
-						log.Printf("failed to parse icmp body: %+v", receiveMsg)
-						continue
-					}
-
-					if icmpBody.ID != icmp6tr.id {
-						// silently ignore the message that is not for us
-						continue
-					}
-
-					replyObject.Seq = icmpBody.Seq
-					var ty ipv6.ICMPType
-
-					switch receiveMsg.Type {
-					case ipv6.ICMPTypeTimeExceeded:
-						ty = ipv6.ICMPTypeTimeExceeded
-					case ipv6.ICMPTypeEchoReply:
-						ty = ipv6.ICMPTypeEchoReply
-					default:
-						log.Printf("unknown ICMP message: %+v", receiveMsg)
-						continue
-					}
-
-					replyObject.ICMPTypeV6 = &ty
-					replySubCh <- replyObject
 				}
 			}
 		}()
