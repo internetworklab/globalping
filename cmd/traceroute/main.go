@@ -18,10 +18,12 @@ import (
 	"time"
 
 	pkgraw "example.com/rbmq-demo/pkg/raw"
+	pkgthrottle "example.com/rbmq-demo/pkg/throttle"
 	pkgutils "example.com/rbmq-demo/pkg/utils"
 )
 
 var socketPath = flag.String("socket-path", "/var/run/traceroute.sock", "path to the socket file")
+var sharedQuota = flag.Int("shared-quota", 3, "shared quota for the traceroute (packets per second)")
 
 func init() {
 	flag.Parse()
@@ -117,10 +119,12 @@ func ParseSimplePingRequest(r *http.Request) (*SimplePingRequest, error) {
 }
 
 type PingHandler struct {
+	hub *pkgthrottle.SharedThrottleHub
 }
 
-func NewPingHandler() *PingHandler {
+func NewPingHandler(hub *pkgthrottle.SharedThrottleHub) *PingHandler {
 	ph := new(PingHandler)
+	ph.hub = hub
 
 	return ph
 }
@@ -200,6 +204,12 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		transceiver = icmp6tr
 	}
 
+	throttleProxySrc := make(chan interface{}, 0)
+	proxyCh, err := ph.hub.CreateProxy(ctx, throttleProxySrc)
+	if err != nil {
+		log.Fatalf("failed to create proxy: %v", err)
+	}
+
 	go func() {
 		defer log.Printf("Exitting response generating goroutine for %s", pkgutils.GetRemoteAddr(r))
 
@@ -240,6 +250,22 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ttl = *pingRequest.TTL
 	}
 
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case reqraw := <-proxyCh:
+				log.Printf("received request from proxy: %v", reqraw)
+				req, ok := reqraw.(pkgraw.ICMPSendRequest)
+				if !ok {
+					log.Fatal("wrong format")
+				}
+				senderCh <- req
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-r.Context().Done():
@@ -252,7 +278,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				TTL: ttl,
 				Dst: dst,
 			}
-			senderCh <- req
+			throttleProxySrc <- req
 			tracker.MarkSent(req.Seq)
 
 			if pingRequest.TotalPkts != nil && numPktsSent >= *pingRequest.TotalPkts {
@@ -287,7 +313,34 @@ func main() {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	handler := NewPingHandler()
+	if *sharedQuota < 1 {
+		log.Fatalf("shared quota must be greater than 0")
+	}
+
+	throttleConfig := pkgthrottle.TokenBasedThrottleConfig{
+		RefreshInterval:       1 * time.Second,
+		TokenQuotaPerInterval: *sharedQuota,
+	}
+	tsSched, err := pkgthrottle.NewTimeSlicedEVLoopSched(&pkgthrottle.TimeSlicedEVLoopSchedConfig{})
+	if err != nil {
+		log.Fatalf("failed to create time sliced event loop scheduler: %v", err)
+	}
+	tsSchedRunerr := tsSched.Run(ctx)
+
+	throttle := pkgthrottle.NewTokenBasedThrottle(throttleConfig)
+	throttle.Run()
+
+	smoother := pkgthrottle.NewBurstSmoother(time.Duration(1000.0/float64(*sharedQuota)) * time.Millisecond)
+	smoother.Run()
+
+	hub := pkgthrottle.NewICMPTransceiveHub(&pkgthrottle.SharedThrottleHubConfig{
+		TSSched:  tsSched,
+		Throttle: throttle,
+		Smoother: smoother,
+	})
+	hub.Run(ctx)
+
+	handler := NewPingHandler(hub)
 
 	listener, err := net.Listen("unix", *socketPath)
 	if err != nil {
@@ -318,6 +371,10 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigs
+	err = <-tsSchedRunerr
+	if err != nil {
+		log.Fatalf("failed to run time sliced event loop scheduler: %v", err)
+	}
 	log.Printf("Received signal: %v, exiting...", sig.String())
 	cancel()
 }
