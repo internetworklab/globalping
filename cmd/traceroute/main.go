@@ -132,7 +132,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pingReqJSB, _ := json.Marshal(pingRequest)
-	log.Printf("Started ping request for %s: %s", r.RemoteAddr, string(pingReqJSB))
+	log.Printf("Started ping request for %s: %s", pkgutils.GetRemoteAddr(r), string(pingReqJSB))
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -201,7 +201,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		defer log.Printf("Exitting response generating goroutine for %s", r.RemoteAddr)
+		defer log.Printf("Exitting response generating goroutine for %s", pkgutils.GetRemoteAddr(r))
 
 		for {
 			select {
@@ -218,7 +218,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	go func() {
-		defer log.Printf("Exitting ICMP receiver goroutine for %s", r.RemoteAddr)
+		defer log.Printf("Exitting ICMP receiver goroutine for %s", pkgutils.GetRemoteAddr(r))
 
 		receiverCh := transceiver.GetReceiver()
 		for {
@@ -228,7 +228,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			case receiverCh <- subCh:
 				reply := <-subCh
-				tracker.MarkReceived(reply.Seq)
+				tracker.MarkReceived(reply.Seq, reply)
 			}
 		}
 	}()
@@ -243,7 +243,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
-			log.Printf("Exitting sender goroutine for %s", r.RemoteAddr)
+			log.Printf("Exitting sender goroutine for %s", pkgutils.GetRemoteAddr(r))
 			return
 		default:
 			numPktsSent++

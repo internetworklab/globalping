@@ -34,7 +34,7 @@ type ICMPReceiveReply struct {
 	Seq  int
 	TTL  int
 
-	// it's basically the same as Addr.Network() + ':' + Addr.String()
+	// the Src of the icmp echo reply, in string
 	Peer string
 
 	ReceivedAt time.Time
@@ -304,7 +304,7 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 							ID:         icmp6tr.id,
 							Size:       nBytes,
 							ReceivedAt: receivedAt,
-							Peer:       peerAddr.Network() + ":" + peerAddr.String(),
+							Peer:       peerAddr.String(),
 							TTL:        ctrlMsg.HopLimit,
 							Seq:        -1, // if can't determine, use -1
 						}

@@ -6,6 +6,7 @@ package raw
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 )
@@ -15,6 +16,7 @@ type ICMPTrackerEntry struct {
 	SentAt     time.Time
 	ReceivedAt []time.Time
 	Timer      *time.Timer `json:"-"`
+	Raw        []interface{}
 }
 
 func (itEnt *ICMPTrackerEntry) ReadonlyClone() *ICMPTrackerEntry {
@@ -27,6 +29,8 @@ func (itEnt *ICMPTrackerEntry) ReadonlyClone() *ICMPTrackerEntry {
 	newOne.Timer = nil
 	newOne.ReceivedAt = make([]time.Time, len(itEnt.ReceivedAt))
 	copy(newOne.ReceivedAt, itEnt.ReceivedAt)
+	newOne.Raw = make([]interface{}, len(itEnt.Raw))
+	copy(newOne.Raw, itEnt.Raw)
 	return newOne
 }
 
@@ -134,47 +138,6 @@ func (it *ICMPTracker) cleanupEntry(seq int) {
 	}
 }
 
-func (it *ICMPTracker) handleInTime(seq int) {
-	requestCh, ok := <-it.serviceChan
-	if !ok {
-		// engine is already shutdown
-		return
-	}
-	defer close(requestCh)
-
-	fn := func(ctx context.Context) error {
-		if ent, ok := it.store[seq]; ok {
-			if ent.Timer != nil {
-				ent.Timer.Stop()
-				ent.Timer = nil
-			}
-			ent.ReceivedAt = append(ent.ReceivedAt, time.Now())
-			if clone := ent.ReadonlyClone(); clone != nil {
-				go func(ent ICMPTrackerEntry) {
-					it.RecvEvC <- ent
-				}(*clone)
-			}
-
-			go func() {
-				// we won't keep the entry indefinitely just for waiting dup icmp replies.
-				<-time.After(it.pktTimeout)
-				it.cleanupEntry(seq)
-			}()
-		}
-		return nil
-	}
-
-	req := ServiceRequest{
-		Func:   fn,
-		Result: make(chan error),
-	}
-	requestCh <- req
-	err := <-req.Result
-	if err != nil {
-		log.Printf("failed to handle in-time for seq %d: %v", seq, err)
-	}
-}
-
 func (it *ICMPTracker) handleTimeout(seq int) {
 	requestCh, ok := <-it.serviceChan
 	if !ok {
@@ -243,7 +206,45 @@ func (it *ICMPTracker) MarkSent(seq int) error {
 	return <-resultCh
 }
 
-func (it *ICMPTracker) MarkReceived(seq int) error {
-	it.handleInTime(seq)
+func (it *ICMPTracker) MarkReceived(seq int, raw interface{}) error {
+	requestCh, ok := <-it.serviceChan
+	if !ok {
+		// engine is already shutdown
+		return fmt.Errorf("engine is closed")
+	}
+	defer close(requestCh)
+
+	fn := func(ctx context.Context) error {
+		if ent, ok := it.store[seq]; ok {
+			if ent.Timer != nil {
+				ent.Timer.Stop()
+				ent.Timer = nil
+			}
+			ent.ReceivedAt = append(ent.ReceivedAt, time.Now())
+			ent.Raw = append(ent.Raw, raw)
+			if clone := ent.ReadonlyClone(); clone != nil {
+				go func(ent ICMPTrackerEntry) {
+					it.RecvEvC <- ent
+				}(*clone)
+			}
+
+			go func() {
+				// we won't keep the entry indefinitely just for waiting dup icmp replies.
+				<-time.After(it.pktTimeout)
+				it.cleanupEntry(seq)
+			}()
+		}
+		return nil
+	}
+
+	req := ServiceRequest{
+		Func:   fn,
+		Result: make(chan error),
+	}
+	requestCh <- req
+	err := <-req.Result
+	if err != nil {
+		return fmt.Errorf("failed to handle in-time for seq %d: %v", seq, err)
+	}
 	return nil
 }
