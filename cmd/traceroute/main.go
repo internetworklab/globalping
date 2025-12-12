@@ -55,6 +55,8 @@ func ParseSimplePingRequest(r *http.Request) (*SimplePingRequest, error) {
 			return nil, fmt.Errorf("failed to parse interval: %v", err)
 		}
 		result.IntvMilliseconds = intervalInt
+	} else {
+		result.IntvMilliseconds = 1000
 	}
 
 	if pktTimeoutMilliSecs := r.URL.Query().Get("pktTimeoutMs"); pktTimeoutMilliSecs != "" {
@@ -63,6 +65,8 @@ func ParseSimplePingRequest(r *http.Request) (*SimplePingRequest, error) {
 			return nil, fmt.Errorf("failed to parse pktTimeout: %v", err)
 		}
 		result.PktTimeoutMilliseconds = pktTimeoutInt
+	} else {
+		result.PktTimeoutMilliseconds = 3000
 	}
 
 	if ttl := r.URL.Query().Get("ttl"); ttl != "" {
@@ -132,6 +136,8 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Started ping request for %s: %s", r.RemoteAddr, string(pingReqJSB))
 
 	ctx := r.Context()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	var resolver *net.Resolver = net.DefaultResolver
 	if pingRequest.Resolver != nil {
@@ -186,12 +192,25 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		for ev := range ph.ICMPTracker.RecvEvC {
-			json.NewEncoder(w).Encode(ev)
+		defer log.Printf("Exitting response generating goroutine for %s", r.RemoteAddr)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-ph.ICMPTracker.RecvEvC:
+				json.NewEncoder(w).Encode(ev)
+				flusher, ok := w.(http.Flusher)
+				if ok {
+					flusher.Flush()
+				}
+			}
 		}
 	}()
 
 	go func() {
+		defer log.Printf("Exitting ICMP receiver goroutine for %s", r.RemoteAddr)
+
 		receiverCh := transceiver.GetReceiver()
 		for {
 			subCh := make(chan pkgraw.ICMPReceiveReply)
@@ -205,29 +224,35 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	go func() {
-		defer log.Printf("exitting sender goroutine for %s", r.RemoteAddr)
+	senderCh := transceiver.GetSender()
+	numPktsSent := 0
+	ttl := 64
+	if pingRequest.TTL != nil {
+		ttl = *pingRequest.TTL
+	}
 
-		senderCh := transceiver.GetSender()
-		numPktsSent := 0
-		ttl := 64
-		if pingRequest.TTL != nil {
-			ttl = *pingRequest.TTL
-		}
-		for {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("Exitting sender goroutine for %s", r.RemoteAddr)
+			return
+		default:
 			numPktsSent++
-			senderCh <- pkgraw.ICMPSendRequest{
+			req := pkgraw.ICMPSendRequest{
 				Seq: numPktsSent,
 				TTL: ttl,
 				Dst: dst,
 			}
+			senderCh <- req
+			tracker.MarkSent(req.Seq)
 
 			if pingRequest.TotalPkts != nil && numPktsSent >= *pingRequest.TotalPkts {
 				break
 			}
 			<-time.After(time.Duration(pingRequest.IntvMilliseconds) * time.Millisecond)
 		}
-	}()
+
+	}
 }
 
 func selectDstIP(ctx context.Context, resolver *net.Resolver, host string, preferV4 *bool, preferV6 *bool) (*net.IPAddr, error) {
