@@ -135,8 +135,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pingReqJSB, _ := json.Marshal(pingRequest)
 	log.Printf("Started ping request for %s: %s", r.RemoteAddr, string(pingReqJSB))
 
-	ctx := r.Context()
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	var resolver *net.Resolver = net.DefaultResolver
@@ -233,7 +232,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-r.Context().Done():
 			log.Printf("Exitting sender goroutine for %s", r.RemoteAddr)
 			return
 		default:
@@ -251,7 +250,6 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			<-time.After(time.Duration(pingRequest.IntvMilliseconds) * time.Millisecond)
 		}
-
 	}
 }
 

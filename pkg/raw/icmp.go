@@ -123,7 +123,8 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 							if err, ok := err.(net.Error); ok && err.Timeout() {
 								continue
 							}
-							log.Fatalf("failed to read from connection: %v", err)
+							log.Printf("failed to read from connection: %v", err)
+							break
 						}
 						receiveMsg, err := icmp.ParseMessage(ipv4.ICMPTypeEchoReply.Protocol(), rb[:nBytes])
 						if err != nil {
@@ -290,7 +291,8 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 								log.Printf("timeout reading from connection, skipping")
 								continue
 							}
-							log.Fatalf("failed to read from connection: %v", err)
+							log.Printf("failed to read from connection: %v", err)
+							break
 						}
 						receiveMsg, err := icmp.ParseMessage(ipv6.ICMPTypeEchoReply.Protocol(), rb[:nBytes])
 						if err != nil {
