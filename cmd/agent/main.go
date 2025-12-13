@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -311,12 +312,18 @@ func selectDstIP(ctx context.Context, resolver *net.Resolver, host string, prefe
 }
 
 type AgentCmd struct {
-	NodeName      string   `help:"The name of the node" default:"traceroute-1"`
-	HttpEndpoint  string   `help:"The HTTP endpoint of the node" default:"https://localhost:8080/simpleping"`
-	ServerAddress string   `help:"The server address of the node" default:"https://localhost:8080"`
-	WebSocketPath string   `help:"The WebSocket path of the node" default:"/ws"`
-	PeerCAs       []string `help:"A list of path to the CAs use to verify peer certificates" type:"path"`
-	ServerName    string   `help:"The name of the server" default:"traceroute"`
+	NodeName      string `help:"The name of the node" default:"traceroute-1"`
+	HttpEndpoint  string `help:"The HTTP endpoint of the node" default:"https://localhost:8080/simpleping"`
+	ServerAddress string `help:"The server address of the node" default:"https://localhost:8080"`
+	WebSocketPath string `help:"The WebSocket path of the node" default:"/ws"`
+
+	PeerCAs     []string `help:"PeerCAs are custom CAs use to verify the hub (server)'s certificate, if none is provided, will use the system CAs to do so. PeerCAs are also use to verify the client's certificate when functioning as a server." type:"path"`
+	ServerName  string   `help:"Also use to verify the server's certificate" default:"traceroute"`
+	ClientCerts []string `help:"When connecting to the hub(the server), authenticate ourselves to the server" type:"path"`
+
+	// Agent also functions as a server (i.e. provides public tls-secured endpoint, so it might also needs a cert pair)
+	ServerCert    string `help:"The path to the server certificate" type:"path"`
+	ServerCertKey string `help:"The path to the server key" type:"path"`
 }
 
 var CLI struct {
@@ -380,8 +387,22 @@ func (agentCmd *AgentCmd) Run() error {
 	go func() {
 		muxer := http.NewServeMux()
 		muxer.Handle("/simpleping", handler)
+		tlsConfig := &tls.Config{
+			ClientAuth: tls.RequireAndVerifyClientCert,
+		}
+		if customCAs != nil {
+			tlsConfig.ClientCAs = customCAs
+		}
 		server := http.Server{
-			Handler: muxer,
+			Handler:   muxer,
+			TLSConfig: tlsConfig,
+		}
+		if agentCmd.ServerCert != "" && agentCmd.ServerCertKey != "" {
+			cert, err := tls.LoadX509KeyPair(agentCmd.ServerCert, agentCmd.ServerCertKey)
+			if err != nil {
+				log.Fatalf("failed to load server certificate: %v", err)
+			}
+			tlsConfig.Certificates = []tls.Certificate{cert}
 		}
 		if err := server.Serve(listener); err != nil {
 			if !errors.Is(err, net.ErrClosed) {
