@@ -6,8 +6,8 @@ import (
 )
 
 var CLI struct {
-	Agent pkgcli.AgentCmd
-	Hub   pkgcli.HubCmd
+	Agent pkgcli.AgentCmd `cmd:"agent"`
+	Hub   pkgcli.HubCmd `cmd:"hub"`
 }
 
 func main() {

@@ -23,12 +23,16 @@ var upgrader = websocket.Upgrader{}
 const serverShutdownTimeout = 30 * time.Second
 
 type HubCmd struct {
-	PeerCAs []string `help:"A list of path to the CAs use to verify peer certificates" type:"path"`
+	PeerCAs []string `help:"A list of path to the CAs use to verify peer certificates, can be specified multiple times" type:"path"`
 	Address string   `help:"The address to listen on" default:"localhost:8080"`
 
 	// When the hub is calling functions exposed by the agent, it have to authenticate itself to the agent.
 	ClientCert    string `help:"The path to the client certificate" type:"path"`
 	ClientCertKey string `help:"The path to the client certificate key" type:"path"`
+
+	// Certificates to present to the clients when the hub itself is acting as a server.
+	ServerCert    string `help:"The path to the server certificate" type:"path"`
+	ServerCertKey string `help:"The path to the server certificate key" type:"path"`
 }
 
 func (hubCmd HubCmd) Run() error {
@@ -70,6 +74,16 @@ func (hubCmd HubCmd) Run() error {
 		ClientCAs:          certPool,
 		InsecureSkipVerify: false,
 		Certificates:       clientCerts,
+	}
+	if hubCmd.ServerCert != "" && hubCmd.ServerCertKey != "" {
+		cert, err := tls.LoadX509KeyPair(hubCmd.ServerCert, hubCmd.ServerCertKey)
+		if err != nil {
+			log.Fatalf("Failed to load server certificate: %v", err)
+		}
+		if tlsConfig.Certificates == nil {
+			tlsConfig.Certificates = make([]tls.Certificate, 0)
+		}
+		tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
 	}
 	if hubCmd.PeerCAs != nil {
 		customCAs := x509.NewCertPool()
