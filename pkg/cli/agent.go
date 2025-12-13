@@ -367,22 +367,24 @@ func (agentCmd *AgentCmd) Run() error {
 	go func() {
 		muxer := http.NewServeMux()
 		muxer.Handle("/simpleping", handler)
-		tlsConfig := &tls.Config{
+
+		// TLSConfig to apply when acting as a server (i.e. we provide services, peer calls us)
+		serverSideTLSCfg := &tls.Config{
 			ClientAuth: tls.RequireAndVerifyClientCert,
 		}
 		if customCAs != nil {
-			tlsConfig.ClientCAs = customCAs
+			serverSideTLSCfg.ClientCAs = customCAs
 		}
 		server := http.Server{
 			Handler:   muxer,
-			TLSConfig: tlsConfig,
+			TLSConfig: serverSideTLSCfg,
 		}
 		if agentCmd.ServerCert != "" && agentCmd.ServerCertKey != "" {
 			cert, err := tls.LoadX509KeyPair(agentCmd.ServerCert, agentCmd.ServerCertKey)
 			if err != nil {
 				log.Fatalf("failed to load server certificate: %v", err)
 			}
-			tlsConfig.Certificates = []tls.Certificate{cert}
+			serverSideTLSCfg.Certificates = []tls.Certificate{cert}
 		}
 		if err := server.Serve(listener); err != nil {
 			if !errors.Is(err, net.ErrClosed) {

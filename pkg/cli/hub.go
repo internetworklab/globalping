@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -50,34 +49,27 @@ func (hubCmd HubCmd) Run() error {
 	muxer.Handle("/ws", wsHandler)
 	muxer.Handle("/conns", connsHandler)
 
-	clientCerts := make([]tls.Certificate, 0)
-	if hubCmd.ClientCert != "" && hubCmd.ClientCertKey != "" {
-		cert, err := tls.LoadX509KeyPair(hubCmd.ClientCert, hubCmd.ClientCertKey)
-		if err != nil {
-			log.Fatalf("Failed to load client certificate: %v", err)
-		}
-		clientCerts = append(clientCerts, cert)
-	}
-
 	certPool, err := x509.SystemCertPool()
 	if err != nil {
 		log.Fatalf("Failed to get system cert pool: %v", err)
 	}
-	tlsConfig := &tls.Config{
+
+	// TLSConfig when functioning as a server (i.e. we are the server, while the peer is the client)
+	serverSideTLSCfg := &tls.Config{
 		ClientAuth:         tls.RequireAndVerifyClientCert,
 		ClientCAs:          certPool,
 		InsecureSkipVerify: false,
-		Certificates:       clientCerts,
 	}
 	if hubCmd.ServerCert != "" && hubCmd.ServerCertKey != "" {
 		cert, err := tls.LoadX509KeyPair(hubCmd.ServerCert, hubCmd.ServerCertKey)
 		if err != nil {
 			log.Fatalf("Failed to load server certificate: %v", err)
 		}
-		if tlsConfig.Certificates == nil {
-			tlsConfig.Certificates = make([]tls.Certificate, 0)
+		if serverSideTLSCfg.Certificates == nil {
+			serverSideTLSCfg.Certificates = make([]tls.Certificate, 0)
 		}
-		tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
+		serverSideTLSCfg.Certificates = append(serverSideTLSCfg.Certificates, cert)
+		log.Printf("Loaded server certificate: %s and key: %s", hubCmd.ServerCert, hubCmd.ServerCertKey)
 	}
 	if hubCmd.PeerCAs != nil {
 		customCAs := x509.NewCertPool()
@@ -89,18 +81,16 @@ func (hubCmd HubCmd) Run() error {
 			}
 			customCAs.AppendCertsFromPEM(caData)
 		}
-		tlsConfig.ClientCAs = customCAs
+		serverSideTLSCfg.ClientCAs = customCAs
 	}
 
 	server := http.Server{
-		Handler:   pkghandler.NewWithCORSHandler(muxer),
-		TLSConfig: tlsConfig,
+		Handler: pkghandler.NewWithCORSHandler(muxer),
 	}
 
-	addr := hubCmd.Address
-	listener, err := net.Listen("tcp", addr)
+	listener, err := tls.Listen("tcp", hubCmd.Address, serverSideTLSCfg)
 	if err != nil {
-		log.Fatalf("Failed to listen on address %s: %v", addr, err)
+		log.Fatalf("Failed to listen on address %s: %v", hubCmd.Address, err)
 	}
 	log.Printf("Listening on %s", listener.Addr())
 
