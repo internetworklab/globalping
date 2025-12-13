@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -26,11 +25,21 @@ import (
 	pkgutils "example.com/rbmq-demo/pkg/utils"
 )
 
-var socketPath = flag.String("socket-path", "/var/run/traceroute.sock", "path to the socket file")
-var sharedQuota = flag.Int("shared-quota", 3, "shared quota for the traceroute (packets per second)")
+type AgentCmd struct {
+	NodeName      string `help:"Nodename to advertise to the hub"`
+	HttpEndpoint  string `help:"HTTP endpoint to advertise to the hub"`
+	ServerAddress string `help:"WebSocket Address of the hub" default:"wss://localhost:8080/ws"`
 
-func init() {
-	flag.Parse()
+	PeerCAs     []string `help:"PeerCAs are custom CAs use to verify the hub (server)'s certificate, if none is provided, will use the system CAs to do so. PeerCAs are also use to verify the client's certificate when functioning as a server." type:"path"`
+	ServerName  string   `help:"Also use to verify the server's certificate" default:"traceroute"`
+	ClientCerts []string `help:"When connecting to the hub(the server), authenticate ourselves to the server" type:"path"`
+
+	// Agent also functions as a server (i.e. provides public tls-secured endpoint, so it might also needs a cert pair)
+	ServerCert    string `help:"The path to the server certificate" type:"path"`
+	ServerCertKey string `help:"The path to the server key" type:"path"`
+
+	SocketPath  string `help:"Path to the socket file" default:"/var/run/traceroute.sock"`
+	SharedQuota int    `help:"Shared quota for the traceroute (packets per second)" default:"3"`
 }
 
 type SimplePingRequest struct {
@@ -208,7 +217,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		transceiver = icmp6tr
 	}
 
-	throttleProxySrc := make(chan interface{}, 0)
+	throttleProxySrc := make(chan interface{})
 	proxyCh, err := ph.hub.CreateProxy(ctx, throttleProxySrc)
 	if err != nil {
 		log.Fatalf("failed to create proxy: %v", err)
@@ -311,24 +320,6 @@ func selectDstIP(ctx context.Context, resolver *net.Resolver, host string, prefe
 	return &dst, nil
 }
 
-type AgentCmd struct {
-	NodeName      string `help:"Nodename to advertise to the hub"`
-	HttpEndpoint  string `help:"HTTP endpoint to advertise to the hub"`
-	ServerAddress string `help:"WebSocket Address of the hub" default:"wss://localhost:8080/ws"`
-
-	PeerCAs     []string `help:"PeerCAs are custom CAs use to verify the hub (server)'s certificate, if none is provided, will use the system CAs to do so. PeerCAs are also use to verify the client's certificate when functioning as a server." type:"path"`
-	ServerName  string   `help:"Also use to verify the server's certificate" default:"traceroute"`
-	ClientCerts []string `help:"When connecting to the hub(the server), authenticate ourselves to the server" type:"path"`
-
-	// Agent also functions as a server (i.e. provides public tls-secured endpoint, so it might also needs a cert pair)
-	ServerCert    string `help:"The path to the server certificate" type:"path"`
-	ServerCertKey string `help:"The path to the server key" type:"path"`
-}
-
-var CLI struct {
-	Agent AgentCmd
-}
-
 func (agentCmd *AgentCmd) Run() error {
 
 	ctx := context.TODO()
@@ -347,13 +338,13 @@ func (agentCmd *AgentCmd) Run() error {
 		}
 	}
 
-	if *sharedQuota < 1 {
+	if agentCmd.SharedQuota < 1 {
 		log.Fatalf("shared quota must be greater than 0")
 	}
 
 	throttleConfig := pkgthrottle.TokenBasedThrottleConfig{
 		RefreshInterval:       1 * time.Second,
-		TokenQuotaPerInterval: *sharedQuota,
+		TokenQuotaPerInterval: agentCmd.SharedQuota,
 	}
 	tsSched, err := pkgthrottle.NewTimeSlicedEVLoopSched(&pkgthrottle.TimeSlicedEVLoopSchedConfig{})
 	if err != nil {
@@ -364,7 +355,7 @@ func (agentCmd *AgentCmd) Run() error {
 	throttle := pkgthrottle.NewTokenBasedThrottle(throttleConfig)
 	throttle.Run()
 
-	smoother := pkgthrottle.NewBurstSmoother(time.Duration(1000.0/float64(*sharedQuota)) * time.Millisecond)
+	smoother := pkgthrottle.NewBurstSmoother(time.Duration(1000.0/float64(agentCmd.SharedQuota)) * time.Millisecond)
 	smoother.Run()
 
 	hub := pkgthrottle.NewICMPTransceiveHub(&pkgthrottle.SharedThrottleHubConfig{
@@ -376,12 +367,12 @@ func (agentCmd *AgentCmd) Run() error {
 
 	handler := NewPingHandler(hub)
 
-	listener, err := net.Listen("unix", *socketPath)
+	listener, err := net.Listen("unix", agentCmd.SocketPath)
 	if err != nil {
-		log.Fatalf("failed to listen on socket %s: %v", *socketPath, err)
+		log.Fatalf("failed to listen on socket %s: %v", agentCmd.SocketPath, err)
 	}
 	defer listener.Close()
-	log.Printf("Listening on socket %s", *socketPath)
+	log.Printf("Listening on socket %s", agentCmd.SocketPath)
 
 	go func() {
 		muxer := http.NewServeMux()

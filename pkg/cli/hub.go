@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -13,10 +13,8 @@ import (
 	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
-
 	pkghandler "example.com/rbmq-demo/pkg/handler"
 	pkgsafemap "example.com/rbmq-demo/pkg/safemap"
-	"github.com/alecthomas/kong"
 	"github.com/gorilla/websocket"
 )
 
@@ -27,6 +25,10 @@ const serverShutdownTimeout = 30 * time.Second
 type HubCmd struct {
 	PeerCAs []string `help:"A list of path to the CAs use to verify peer certificates" type:"path"`
 	Address string   `help:"The address to listen on" default:"localhost:8080"`
+
+	// When the hub is calling functions exposed by the agent, it have to authenticate itself to the agent.
+	ClientCert    string `help:"The path to the client certificate" type:"path"`
+	ClientCertKey string `help:"The path to the client certificate key" type:"path"`
 }
 
 func (hubCmd HubCmd) Run() error {
@@ -50,6 +52,15 @@ func (hubCmd HubCmd) Run() error {
 	muxer.Handle("/conns", connsHandler)
 	muxer.Handle("/ping-task", pingTaskHandler)
 
+	clientCerts := make([]tls.Certificate, 0)
+	if hubCmd.ClientCert != "" && hubCmd.ClientCertKey != "" {
+		cert, err := tls.LoadX509KeyPair(hubCmd.ClientCert, hubCmd.ClientCertKey)
+		if err != nil {
+			log.Fatalf("Failed to load client certificate: %v", err)
+		}
+		clientCerts = append(clientCerts, cert)
+	}
+
 	certPool, err := x509.SystemCertPool()
 	if err != nil {
 		log.Fatalf("Failed to get system cert pool: %v", err)
@@ -58,6 +69,7 @@ func (hubCmd HubCmd) Run() error {
 		ClientAuth:         tls.RequireAndVerifyClientCert,
 		ClientCAs:          certPool,
 		InsecureSkipVerify: false,
+		Certificates:       clientCerts,
 	}
 	if hubCmd.PeerCAs != nil {
 		customCAs := x509.NewCertPool()
@@ -108,14 +120,4 @@ func (hubCmd HubCmd) Run() error {
 	}
 	log.Println("Server shut down successfully")
 	return nil
-}
-
-var CLI struct {
-	Hub HubCmd
-}
-
-func main() {
-	ctx := kong.Parse(&CLI)
-	err := ctx.Run()
-	ctx.FatalIfErrorf(err)
 }
