@@ -13,6 +13,7 @@ import (
 
 type ICMPTrackerEntry struct {
 	Seq        int
+	TTL        int
 	SentAt     time.Time
 	ReceivedAt []time.Time
 	Timer      *time.Timer `json:"-"`
@@ -172,7 +173,7 @@ func (it *ICMPTracker) handleTimeout(seq int) {
 	}
 }
 
-func (it *ICMPTracker) MarkSent(seq int) error {
+func (it *ICMPTracker) MarkSent(seq int, ttl int) error {
 	requestCh, ok := <-it.serviceChan
 	if !ok {
 		// engine is already shutdown
@@ -184,6 +185,7 @@ func (it *ICMPTracker) MarkSent(seq int) error {
 
 		ent := &ICMPTrackerEntry{
 			Seq:    seq,
+			TTL:    ttl,
 			SentAt: time.Now(),
 			Timer:  time.NewTimer(it.pktTimeout),
 		}

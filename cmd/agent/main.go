@@ -265,7 +265,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					log.Fatal("wrong format")
 				}
 				senderCh <- req
-				tracker.MarkSent(req.Seq)
+				tracker.MarkSent(req.Seq, req.TTL)
 			}
 		}
 	}()
@@ -312,10 +312,9 @@ func selectDstIP(ctx context.Context, resolver *net.Resolver, host string, prefe
 }
 
 type AgentCmd struct {
-	NodeName      string `help:"The name of the node" default:"traceroute-1"`
-	HttpEndpoint  string `help:"The HTTP endpoint of the node" default:"https://localhost:8080/simpleping"`
-	ServerAddress string `help:"The server address of the node" default:"https://localhost:8080"`
-	WebSocketPath string `help:"The WebSocket path of the node" default:"/ws"`
+	NodeName      string `help:"Nodename to advertise to the hub"`
+	HttpEndpoint  string `help:"HTTP endpoint to advertise to the hub"`
+	ServerAddress string `help:"WebSocket Address of the hub" default:"wss://localhost:8080/ws"`
 
 	PeerCAs     []string `help:"PeerCAs are custom CAs use to verify the hub (server)'s certificate, if none is provided, will use the system CAs to do so. PeerCAs are also use to verify the client's certificate when functioning as a server." type:"path"`
 	ServerName  string   `help:"Also use to verify the server's certificate" default:"traceroute"`
@@ -423,7 +422,6 @@ func (agentCmd *AgentCmd) Run() error {
 	attributes[pkgnodereg.AttributeKeyHttpEndpoint] = agentCmd.HttpEndpoint
 	agent := pkgnodereg.NodeRegistrationAgent{
 		ServerAddress: agentCmd.ServerAddress,
-		WebSocketPath: agentCmd.WebSocketPath,
 		NodeName:      agentCmd.NodeName,
 	}
 	agent.NodeAttributes = attributes

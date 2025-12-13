@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
@@ -26,7 +25,6 @@ const (
 
 type NodeRegistrationAgent struct {
 	ServerAddress  string
-	WebSocketPath  string
 	NodeName       string
 	CorrelationID  *string
 	SeqID          *uint64
@@ -41,11 +39,6 @@ type NodeRegistrationAgent struct {
 func (agent *NodeRegistrationAgent) Init() error {
 	if agent.ServerAddress == "" {
 		return fmt.Errorf("server address is required")
-	}
-
-	if agent.WebSocketPath == "" {
-		agent.WebSocketPath = "/ws"
-		log.Printf("Using default web socket path: %s", agent.WebSocketPath)
 	}
 
 	if agent.NodeName == "" {
@@ -132,12 +125,6 @@ func (agent *NodeRegistrationAgent) doRun(ctx context.Context) error {
 		return fmt.Errorf("agent not initialized")
 	}
 
-	u := url.URL{
-		Scheme: "ws",
-		Host:   agent.ServerAddress,
-		Path:   agent.WebSocketPath,
-	}
-
 	errCh := make(chan error)
 
 	go func() {
@@ -163,15 +150,15 @@ func (agent *NodeRegistrationAgent) doRun(ctx context.Context) error {
 			TLSClientConfig:  tlsConfig,
 		}
 
-		log.Printf("Agent %s started, connecting to %s", agent.NodeName, u.String())
-		c, _, err := dialer.Dial(u.String(), nil)
+		log.Printf("Agent %s started, connecting to %s", agent.NodeName, agent.ServerAddress)
+		c, _, err := dialer.Dial(agent.ServerAddress, nil)
 		if err != nil {
-			errCh <- fmt.Errorf("failed to dial %s: %v", u.String(), err)
+			errCh <- fmt.Errorf("failed to dial %s: %v", agent.ServerAddress, err)
 			return
 		}
 		defer c.Close()
 
-		log.Printf("Connected to server %s: remote address: %s", u.String(), c.RemoteAddr())
+		log.Printf("Connected to server %s: remote address: %s", agent.ServerAddress, c.RemoteAddr())
 
 		receiverExit := make(chan error)
 		go func() {
