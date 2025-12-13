@@ -12,4 +12,5 @@ bin/globalping hub \
   --client-cert-key=certs/hub-key.pem \
   --server-cert=certs/hub.pem \
   --server-cert-key=certs/hub-key.pem \
+  --web-socket-path=/ws \
   --address :8080

@@ -28,7 +28,7 @@ import (
 type AgentCmd struct {
 	NodeName      string `help:"Nodename to advertise to the hub, leave it empty for not advertising itself to the hub"`
 	HttpEndpoint  string `help:"HTTP endpoint to advertise to the hub"`
-	ServerAddress string `help:"WebSocket Address of the hub" default:"wss://localhost:8080/ws"`
+	ServerAddress string `help:"WebSocket Address of the hub" default:"wss://hub.example.com:8080/ws"`
 
 	// PeerCAs are use to verify certs presented by the peer,
 	// For agent, the peer is the hub, for hub, the peer is the agent.
@@ -36,7 +36,7 @@ type AgentCmd struct {
 	PeerCAs []string `help:"PeerCAs are custom CAs use to verify the hub (server)'s certificate, if none is provided, will use the system CAs to do so. PeerCAs are also use to verify the client's certificate when functioning as a server." type:"path"`
 
 	// Agent will connect to the hub (sometimes), so this is the TLS name (mostly CN field or DNS Alt Name) of the hub.
-	ServerName string `help:"Also use to verify the server's certificate" default:"traceroute"`
+	ServerName string `help:"Also use to verify the server's certificate"`
 
 	// When the agent is connecting to the hub, the hub needs to authenticate the client, so the client (the agent) also have to present a cert
 	// to complete the m-TLS authentication process.
@@ -47,8 +47,8 @@ type AgentCmd struct {
 	ServerCert    string `help:"The path to the server certificate" type:"path"`
 	ServerCertKey string `help:"The path to the server key" type:"path"`
 
-	SocketPath  string `help:"Path to the socket file" default:"/var/run/traceroute.sock"`
-	SharedQuota int    `help:"Shared quota for the traceroute (packets per second)" default:"3"`
+	TLSListenAddress string `help:"Address to listen on for TLS" default:"localhost:8081"`
+	SharedQuota      int    `help:"Shared quota for the traceroute (packets per second)" default:"10"`
 }
 
 type SimplePingRequest struct {
@@ -320,6 +320,7 @@ func (agentCmd *AgentCmd) Run() error {
 	if agentCmd.PeerCAs != nil {
 		customCAs = x509.NewCertPool()
 		for _, ca := range agentCmd.PeerCAs {
+			log.Printf("Appending CA file to the trust list: %s", ca)
 			caData, err := os.ReadFile(ca)
 			if err != nil {
 				log.Fatalf("failed to read CA file %s: %v", ca, err)
@@ -357,35 +358,40 @@ func (agentCmd *AgentCmd) Run() error {
 
 	handler := NewPingHandler(hub)
 
-	listener, err := net.Listen("unix", agentCmd.SocketPath)
+	muxer := http.NewServeMux()
+	muxer.Handle("/simpleping", handler)
+
+	// TLSConfig to apply when acting as a server (i.e. we provide services, peer calls us)
+	serverSideTLSCfg := &tls.Config{
+		ClientAuth: tls.RequireAndVerifyClientCert,
+	}
+	if customCAs != nil {
+		serverSideTLSCfg.ClientCAs = customCAs
+	}
+	server := http.Server{
+		Handler:   muxer,
+		TLSConfig: serverSideTLSCfg,
+	}
+	if agentCmd.ServerCert != "" && agentCmd.ServerCertKey != "" {
+		cert, err := tls.LoadX509KeyPair(agentCmd.ServerCert, agentCmd.ServerCertKey)
+		if err != nil {
+			log.Fatalf("failed to load server certificate: %v", err)
+		}
+		if serverSideTLSCfg.Certificates == nil {
+			serverSideTLSCfg.Certificates = make([]tls.Certificate, 0)
+		}
+		serverSideTLSCfg.Certificates = append(serverSideTLSCfg.Certificates, cert)
+		log.Printf("Loaded server certificate: %s and key: %s", agentCmd.ServerCert, agentCmd.ServerCertKey)
+	}
+
+	listener, err := tls.Listen("tcp", agentCmd.TLSListenAddress, serverSideTLSCfg)
 	if err != nil {
-		log.Fatalf("failed to listen on socket %s: %v", agentCmd.SocketPath, err)
+		log.Fatalf("failed to listen on address %s: %v", agentCmd.TLSListenAddress, err)
 	}
 	defer listener.Close()
-	log.Printf("Listening on socket %s", agentCmd.SocketPath)
+	log.Printf("Listening on address %s", agentCmd.TLSListenAddress)
 
 	go func() {
-		muxer := http.NewServeMux()
-		muxer.Handle("/simpleping", handler)
-
-		// TLSConfig to apply when acting as a server (i.e. we provide services, peer calls us)
-		serverSideTLSCfg := &tls.Config{
-			ClientAuth: tls.RequireAndVerifyClientCert,
-		}
-		if customCAs != nil {
-			serverSideTLSCfg.ClientCAs = customCAs
-		}
-		server := http.Server{
-			Handler:   muxer,
-			TLSConfig: serverSideTLSCfg,
-		}
-		if agentCmd.ServerCert != "" && agentCmd.ServerCertKey != "" {
-			cert, err := tls.LoadX509KeyPair(agentCmd.ServerCert, agentCmd.ServerCertKey)
-			if err != nil {
-				log.Fatalf("failed to load server certificate: %v", err)
-			}
-			serverSideTLSCfg.Certificates = []tls.Certificate{cert}
-		}
 		if err := server.Serve(listener); err != nil {
 			if !errors.Is(err, net.ErrClosed) {
 				log.Fatalf("failed to serve: %v", err)

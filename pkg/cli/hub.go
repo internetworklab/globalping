@@ -22,8 +22,9 @@ var upgrader = websocket.Upgrader{}
 const serverShutdownTimeout = 30 * time.Second
 
 type HubCmd struct {
-	PeerCAs []string `help:"A list of path to the CAs use to verify peer certificates, can be specified multiple times" type:"path"`
-	Address string   `help:"The address to listen on" default:"localhost:8080"`
+	PeerCAs       []string `help:"A list of path to the CAs use to verify peer certificates, can be specified multiple times" type:"path"`
+	Address       string   `help:"The address to listen on" default:"localhost:8080"`
+	WebSocketPath string   `help:"The path to the WebSocket endpoint" default:"/ws"`
 
 	// When the hub is calling functions exposed by the agent, it have to authenticate itself to the agent.
 	ClientCert    string `help:"The path to the client certificate" type:"path"`
@@ -46,7 +47,7 @@ func (hubCmd HubCmd) Run() error {
 	connsHandler := pkghandler.NewConnsHandler(cr)
 
 	muxer := http.NewServeMux()
-	muxer.Handle("/ws", wsHandler)
+	muxer.Handle(hubCmd.WebSocketPath, wsHandler)
 	muxer.Handle("/conns", connsHandler)
 
 	certPool, err := x509.SystemCertPool()
