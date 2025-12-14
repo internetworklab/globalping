@@ -17,10 +17,9 @@ import (
 )
 
 const (
-	AttributeKeyNodeName          = "NodeName"
-	AttributeKeyPingCapability    = "CapabilityPing"
-	AttributeKeyRabbitMQQueueName = "RabbitMQQueueName"
-	AttributeKeyHttpEndpoint      = "HttpEndpoint"
+	AttributeKeyNodeName       = "NodeName"
+	AttributeKeyPingCapability = "CapabilityPing"
+	AttributeKeyHttpEndpoint   = "HttpEndpoint"
 )
 
 type NodeRegistrationAgent struct {

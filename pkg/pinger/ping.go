@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"strings"
 	"time"
 
 	pkgraw "example.com/rbmq-demo/pkg/raw"
@@ -68,7 +69,19 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			}
 		}
 
-		dstPtr, err := pkgutils.SelectDstIP(ctx, resolver, pingRequest.Destination, pingRequest.PreferV4, pingRequest.PreferV6)
+		destHostName := pingRequest.Destination
+		if destHostName == "" {
+			if len(pingRequest.Targets) == 0 {
+				outputEVChan <- PingEvent{Error: fmt.Errorf("destination or targets are required")}
+				return
+			}
+			destHostName = strings.TrimSpace(pingRequest.Targets[0])
+		}
+		if destHostName == "" {
+			outputEVChan <- PingEvent{Error: fmt.Errorf("target is empty")}
+			return
+		}
+		dstPtr, err := pkgutils.SelectDstIP(ctx, resolver, destHostName, pingRequest.PreferV4, pingRequest.PreferV6)
 		if err != nil {
 			outputEVChan <- PingEvent{Error: err}
 			return

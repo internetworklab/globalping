@@ -2,51 +2,24 @@ package handler
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
-	pkgctx "example.com/rbmq-demo/pkg/ctx"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
 	pkgpinger "example.com/rbmq-demo/pkg/pinger"
-	pkgrbmqrpc "example.com/rbmq-demo/pkg/rpc"
 	pkgutils "example.com/rbmq-demo/pkg/utils"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type PingTaskHandler struct {
-	RabbitMQConnection *amqp.Connection
-	ConnRegistry       *pkgconnreg.ConnRegistry
+	ConnRegistry    *pkgconnreg.ConnRegistry
+	ClientTLSConfig *tls.Config
 }
 
-func NewPingTaskHandler(ctx context.Context, connRegistry *pkgconnreg.ConnRegistry) (*PingTaskHandler, error) {
-	rbmqConn, err := pkgctx.GetRabbitMQConnection(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get RabbitMQ connection: %w", err)
-	}
-
-	return &PingTaskHandler{
-		RabbitMQConnection: rbmqConn,
-		ConnRegistry:       connRegistry,
-	}, nil
-}
-
-type PingTaskApplicationForm struct {
-	From       []string `json:"from,omitempty"`
-	Targets    []string `json:"targets"`
-	IntervalMs *uint64  `json:"interval,omitempty"`
-	Count      *uint64  `json:"count,omitempty"`
-	TimeoutMs  *uint64  `json:"timeout,omitempty"`
-}
-
-const defaultIntervalMs = 1000
-const defaultCount = 3
-const defaultTimeoutMs = 10 * 1000
-
-func getRoutingKey(connRegistry *pkgconnreg.ConnRegistry, from string) *string {
+func getRemotePingerEndpoint(connRegistry *pkgconnreg.ConnRegistry, from string) *string {
 	if connRegistry == nil {
 		k := from
 		return &k
@@ -66,14 +39,12 @@ func getRoutingKey(connRegistry *pkgconnreg.ConnRegistry, from string) *string {
 		return nil
 	}
 
-	routingKey, ok := regData.Attributes[pkgnodereg.AttributeKeyRabbitMQQueueName]
-	if ok {
-		return &routingKey
+	remotePingerEndpoint, ok := regData.Attributes[pkgnodereg.AttributeKeyHttpEndpoint]
+	if ok && remotePingerEndpoint != "" {
+		return &remotePingerEndpoint
 	}
 
-	f := from
-
-	return &f
+	return nil
 }
 
 func RespondError(w http.ResponseWriter, err error, status int) {
@@ -86,79 +57,91 @@ func RespondError(w http.ResponseWriter, err error, status int) {
 	http.Error(w, string(respbytes), status)
 }
 
+type withMetadataPinger struct {
+	origin   pkgpinger.Pinger
+	metadata map[string]string
+}
+
+func (wmp *withMetadataPinger) Ping(ctx context.Context) <-chan pkgpinger.PingEvent {
+	if wmp.metadata == nil {
+		return wmp.origin.Ping(ctx)
+	}
+	wrappedCh := make(chan pkgpinger.PingEvent)
+	go func() {
+		defer close(wrappedCh)
+		for ev := range wmp.origin.Ping(ctx) {
+			wrappedEv := new(pkgpinger.PingEvent)
+			*wrappedEv = ev
+			if wrappedEv.Metadata == nil {
+				wrappedEv.Metadata = make(map[string]string)
+			}
+			for k, v := range wmp.metadata {
+				wrappedEv.Metadata[k] = v
+			}
+			wrappedCh <- *wrappedEv
+		}
+	}()
+	return wrappedCh
+}
+
+func WithMetadata(pinger pkgpinger.Pinger, metadata map[string]string) pkgpinger.Pinger {
+	return &withMetadataPinger{
+		origin:   pinger,
+		metadata: metadata,
+	}
+}
+
 func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Set headers for streaming response
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Parse the request body
-	var form PingTaskApplicationForm
-	if err := json.NewDecoder(r.Body).Decode(&form); err != nil {
-		RespondError(w, fmt.Errorf("failed to parse request body: %w", err), http.StatusBadRequest)
+	form, err := pkgpinger.ParseSimplePingRequest(r)
+	if err != nil {
+		json.NewEncoder(w).Encode(pkgutils.ErrorResponse{Error: err.Error()})
 		return
-	}
-
-	if len(form.Targets) == 0 {
-		RespondError(w, fmt.Errorf("no targets specified"), http.StatusBadRequest)
-		return
-	}
-	// use simple ping
-	var count int = defaultCount
-	var timeout time.Duration = defaultTimeoutMs * time.Millisecond
-	var interval time.Duration = defaultIntervalMs * time.Millisecond
-	if form.Count != nil && *form.Count > 0 {
-		count = int(*form.Count)
-	}
-	if form.TimeoutMs != nil && *form.TimeoutMs > 0 {
-		timeout = time.Duration(*form.TimeoutMs) * time.Millisecond
-	}
-	if form.IntervalMs != nil && *form.IntervalMs > 0 {
-		interval = time.Duration(*form.IntervalMs) * time.Millisecond
 	}
 
 	pingers := make([]pkgpinger.Pinger, 0)
-	ctx := context.Background()
+	ctx := r.Context()
 
 	if form.From == nil {
-		// Create pingers for all targets
+		json.NewEncoder(w).Encode(pkgutils.ErrorResponse{Error: "you must specify at least one from node"})
+		return
+	}
+	if form.Targets == nil {
+		json.NewEncoder(w).Encode(pkgutils.ErrorResponse{Error: "you must specify at least one target"})
+		return
+	}
+
+	for _, from := range form.From {
 		for _, target := range form.Targets {
-			cfg := &pkgsimpleping.PingConfiguration{
-				Destination: target,
-				Count:       count,
-				Timeout:     timeout,
-				Interval:    interval,
+			remotePingerEndpoint := getRemotePingerEndpoint(handler.ConnRegistry, from)
+			if remotePingerEndpoint == nil {
+				// the node might be currently offline, skip it for now
+				log.Printf("Node %s appears on the conn registry's list but have no ping capability, skipping...", from)
+				continue
 			}
-			pingers = append(pingers, pkgsimpleping.NewSimplePinger(cfg))
-		}
-	} else {
-		ctx = pkgctx.WithRabbitMQConnection(ctx, handler.RabbitMQConnection)
-		for _, from := range form.From {
-			for _, target := range form.Targets {
-				routingKey := getRoutingKey(handler.ConnRegistry, from)
-				if routingKey == nil {
-					// the node might be currently offline, skip it for now
-					continue
-				}
 
-				rbmqRemoteCaller := pkgrbmqrpc.RabbitMQRemoteCaller{
-					RoutingKey: *routingKey,
-				}
+			derivedPingRequest := new(pkgpinger.SimplePingRequest)
+			*derivedPingRequest = *form
+			derivedPingRequest.Destination = target
+			derivedPingRequest.From = []string{from}
 
-				log.Printf("Sending ping to %s via RabbitMQ routing key %s", target, *routingKey)
-
-				rabbitmqPinger := pkgrabbitmqping.RabbitMQPinger{
-					From:             from,
-					RBMQRemoteCaller: &rbmqRemoteCaller,
-					PingCfg: pkgsimpleping.PingConfiguration{
-						Destination: target,
-						Count:       count,
-						Timeout:     timeout,
-						Interval:    interval,
-					},
-				}
-				pingers = append(pingers, &rabbitmqPinger)
+			var remotePinger pkgpinger.Pinger = &pkgpinger.SimpleRemotePinger{
+				Endpoint:        *remotePingerEndpoint,
+				Request:         *derivedPingRequest,
+				ClientTLSConfig: handler.ClientTLSConfig,
 			}
+			remotePinger = WithMetadata(remotePinger, map[string]string{
+				pkgpinger.MetadataKeyFrom:   from,
+				pkgpinger.MetadataKeyTarget: target,
+			})
+
+			log.Printf("Sending ping to remote pinger %s via http endpoint %s", target, *remotePingerEndpoint)
+
+			pingers = append(pingers, remotePinger)
 		}
 	}
 
