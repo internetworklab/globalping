@@ -37,6 +37,19 @@ type HubCmd struct {
 
 func (hubCmd HubCmd) Run() error {
 
+	var customCAs *x509.CertPool = nil
+	if hubCmd.PeerCAs != nil {
+		customCAs = x509.NewCertPool()
+		for _, ca := range hubCmd.PeerCAs {
+			log.Printf("Appending CA file to the trust list: %s", ca)
+			caData, err := os.ReadFile(ca)
+			if err != nil {
+				log.Fatalf("Failed to read CA file %s: %v", ca, err)
+			}
+			customCAs.AppendCertsFromPEM(caData)
+		}
+	}
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
@@ -45,10 +58,30 @@ func (hubCmd HubCmd) Run() error {
 
 	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr)
 	connsHandler := pkghandler.NewConnsHandler(cr)
+	var clientTLSConfig *tls.Config = &tls.Config{}
+	if customCAs != nil {
+		clientTLSConfig.ClientCAs = customCAs
+	}
+	if hubCmd.ClientCert != "" && hubCmd.ClientCertKey != "" {
+		cert, err := tls.LoadX509KeyPair(hubCmd.ClientCert, hubCmd.ClientCertKey)
+		if err != nil {
+			log.Fatalf("Failed to load server certificate: %v", err)
+		}
+		if clientTLSConfig.Certificates == nil {
+			clientTLSConfig.Certificates = make([]tls.Certificate, 0)
+		}
+		clientTLSConfig.Certificates = append(clientTLSConfig.Certificates, cert)
+		log.Printf("Loaded client certificate: %s and key: %s", hubCmd.ClientCert, hubCmd.ClientCertKey)
+	}
+	pingHandler := &pkghandler.PingTaskHandler{
+		ConnRegistry:    cr,
+		ClientTLSConfig: clientTLSConfig,
+	}
 
 	muxer := http.NewServeMux()
 	muxer.Handle(hubCmd.WebSocketPath, wsHandler)
 	muxer.Handle("/conns", connsHandler)
+	muxer.Handle("/ping", pingHandler)
 
 	certPool, err := x509.SystemCertPool()
 	if err != nil {
@@ -72,16 +105,7 @@ func (hubCmd HubCmd) Run() error {
 		serverSideTLSCfg.Certificates = append(serverSideTLSCfg.Certificates, cert)
 		log.Printf("Loaded server certificate: %s and key: %s", hubCmd.ServerCert, hubCmd.ServerCertKey)
 	}
-	if hubCmd.PeerCAs != nil {
-		customCAs := x509.NewCertPool()
-		for _, ca := range hubCmd.PeerCAs {
-			log.Printf("Appending CA file to the trust list: %s", ca)
-			caData, err := os.ReadFile(ca)
-			if err != nil {
-				log.Fatalf("Failed to read CA file %s: %v", ca, err)
-			}
-			customCAs.AppendCertsFromPEM(caData)
-		}
+	if customCAs != nil {
 		serverSideTLSCfg.ClientCAs = customCAs
 	}
 
