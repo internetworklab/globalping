@@ -196,7 +196,7 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			default:
 				req := pkgraw.ICMPSendRequest{
 					Seq: numPktsSent + 1,
-					TTL: *pingRequest.TTL,
+					TTL: pingRequest.TTL[numPktsSent%len(pingRequest.TTL)],
 					Dst: dst,
 				}
 				throttleProxySrc <- req

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	pkgutils "example.com/rbmq-demo/pkg/utils"
 )
 
 type SimplePingRequest struct {
@@ -18,7 +20,7 @@ type SimplePingRequest struct {
 	PreferV6                   *bool
 	TotalPkts                  *int
 	Resolver                   *string
-	TTL                        *int
+	TTL                        []int
 	ResolveTimeoutMilliseconds *int
 }
 
@@ -90,14 +92,14 @@ func ParseSimplePingRequest(r *http.Request) (*SimplePingRequest, error) {
 	}
 
 	if ttl := r.URL.Query().Get(ParamTTL); ttl != "" {
-		ttlInt, err := strconv.Atoi(ttl)
+
+		ttls, err := pkgutils.ParseInts(ttl)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse ttl: %v", err)
 		}
-		result.TTL = &ttlInt
+		result.TTL = ttls
 	} else {
-		ttl := defaultTTL
-		result.TTL = &ttl
+		result.TTL = []int{defaultTTL}
 	}
 
 	if preferV4 := r.URL.Query().Get(ParamPreferV4); preferV4 != "" {
@@ -159,7 +161,11 @@ func (pr *SimplePingRequest) ToURLValues() url.Values {
 		vals.Add(ParamResolver, *pr.Resolver)
 	}
 	if pr.TTL != nil {
-		vals.Add(ParamTTL, strconv.Itoa(*pr.TTL))
+		ttls := make([]string, 0)
+		for _, ttl := range pr.TTL {
+			ttls = append(ttls, strconv.Itoa(ttl))
+		}
+		vals.Add(ParamTTL, strings.Join(ttls, ","))
 	}
 	if pr.ResolveTimeoutMilliseconds != nil {
 		vals.Add(ParamResolveTimeoutMilliseconds, strconv.Itoa(*pr.ResolveTimeoutMilliseconds))
