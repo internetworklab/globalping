@@ -37,6 +37,8 @@ type ICMPReceiveReply struct {
 	// the Src of the icmp echo reply, in string
 	Peer string
 
+	PeerRDNS []string
+
 	ReceivedAt time.Time
 
 	ICMPTypeV4 *ipv4.ICMPType
