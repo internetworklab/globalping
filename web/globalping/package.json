@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 45843",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -13,7 +13,7 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.5",
     "@mui/material": "^7.3.5",
-    "next": "16.0.5",
+    "next": "^16.0.10",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },

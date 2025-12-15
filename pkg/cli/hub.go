@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,6 +22,7 @@ var upgrader = websocket.Upgrader{}
 type HubCmd struct {
 	PeerCAs       []string `help:"A list of path to the CAs use to verify peer certificates, can be specified multiple times" type:"path"`
 	Address       string   `help:"The address to listen on" default:"localhost:8080"`
+	AddressPublic string   `help:"The address to listen on for public operations" default:"localhost:8082"`
 	WebSocketPath string   `help:"The path to the WebSocket endpoint" default:"/ws"`
 
 	// When the hub is calling functions exposed by the agent, it have to authenticate itself to the agent.
@@ -75,10 +77,14 @@ func (hubCmd HubCmd) Run() error {
 		ClientTLSConfig: clientTLSConfig,
 	}
 
-	muxer := http.NewServeMux()
-	muxer.Handle(hubCmd.WebSocketPath, wsHandler)
-	muxer.Handle("/conns", connsHandler)
-	muxer.Handle("/ping", pingHandler)
+	// muxerPrivate is for privileged rw operations
+	muxerPrivate := http.NewServeMux()
+	muxerPrivate.Handle(hubCmd.WebSocketPath, wsHandler)
+
+	// muxerPublic is for public low-privileged operations
+	muxerPublic := http.NewServeMux()
+	muxerPublic.Handle("/conns", connsHandler)
+	muxerPublic.Handle("/ping", pingHandler)
 
 	certPool, err := x509.SystemCertPool()
 	if err != nil {
@@ -86,7 +92,7 @@ func (hubCmd HubCmd) Run() error {
 	}
 
 	// TLSConfig when functioning as a server (i.e. we are the server, while the peer is the client)
-	serverSideTLSCfg := &tls.Config{
+	privateServerSideTLSCfg := &tls.Config{
 		ClientAuth:         tls.RequireAndVerifyClientCert,
 		ClientCAs:          certPool,
 		InsecureSkipVerify: false,
@@ -96,29 +102,48 @@ func (hubCmd HubCmd) Run() error {
 		if err != nil {
 			log.Fatalf("Failed to load server certificate: %v", err)
 		}
-		if serverSideTLSCfg.Certificates == nil {
-			serverSideTLSCfg.Certificates = make([]tls.Certificate, 0)
+		if privateServerSideTLSCfg.Certificates == nil {
+			privateServerSideTLSCfg.Certificates = make([]tls.Certificate, 0)
 		}
-		serverSideTLSCfg.Certificates = append(serverSideTLSCfg.Certificates, cert)
+		privateServerSideTLSCfg.Certificates = append(privateServerSideTLSCfg.Certificates, cert)
 		log.Printf("Loaded server certificate: %s and key: %s", hubCmd.ServerCert, hubCmd.ServerCertKey)
 	}
 	if customCAs != nil {
-		serverSideTLSCfg.ClientCAs = customCAs
+		privateServerSideTLSCfg.ClientCAs = customCAs
 	}
 
-	server := http.Server{
-		Handler: pkghandler.NewWithCORSHandler(muxer),
+	privateServer := http.Server{
+		Handler: pkghandler.NewWithCORSHandler(muxerPrivate),
+	}
+	publicServer := http.Server{
+		Handler: pkghandler.NewWithCORSHandler(muxerPublic),
 	}
 
-	listener, err := tls.Listen("tcp", hubCmd.Address, serverSideTLSCfg)
+	privateListener, err := tls.Listen("tcp", hubCmd.Address, privateServerSideTLSCfg)
 	if err != nil {
 		log.Fatalf("Failed to listen on address %s: %v", hubCmd.Address, err)
 	}
-	log.Printf("Listening on %s", listener.Addr())
+	log.Printf("Listening on %s for private operations", hubCmd.Address)
+
+	publicListener, err := net.Listen("tcp", hubCmd.AddressPublic)
+	if err != nil {
+		log.Fatalf("Failed to listen on address %s: %v", hubCmd.AddressPublic, err)
+	}
+	log.Printf("Listening on %s for public operations", hubCmd.AddressPublic)
 
 	go func() {
-		log.Printf("Starting server on %s", listener.Addr())
-		err = server.Serve(listener)
+		log.Printf("Starting private server on %s", privateListener.Addr())
+		err = privateServer.Serve(privateListener)
+		if err != nil {
+			if err != http.ErrServerClosed {
+				log.Fatalf("Failed to serve: %v", err)
+			}
+		}
+	}()
+
+	go func() {
+		log.Printf("Starting public server on %s", publicListener.Addr())
+		err = publicServer.Serve(publicListener)
 		if err != nil {
 			if err != http.ErrServerClosed {
 				log.Fatalf("Failed to serve: %v", err)
@@ -130,10 +155,16 @@ func (hubCmd HubCmd) Run() error {
 	log.Printf("Received %s, shutting down ...", sig.String())
 	sm.Close()
 
-	log.Println("Shutting down server...")
-	err = server.Shutdown(context.TODO())
+	log.Println("Shutting down private server...")
+	err = privateServer.Shutdown(context.TODO())
 	if err != nil {
 		log.Printf("Failed to shutdown server: %v", err)
+	}
+
+	log.Println("Shutting down public server...")
+	err = publicServer.Shutdown(context.TODO())
+	if err != nil {
+		log.Printf("Failed to shutdown public server: %v", err)
 	}
 
 	return nil
