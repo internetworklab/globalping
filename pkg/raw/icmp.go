@@ -12,6 +12,12 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
+const ipv4HeaderLen int = 20
+const ipv6HeaderLen int = 40
+const mimICMPHeaderSize int = 8
+const protocolNumberICMPv4 int = 1
+const protocolNumberICMPv6 int = 58
+
 type GeneralICMPTransceiver interface {
 	GetSender() chan<- ICMPSendRequest
 	GetReceiver() chan<- chan ICMPReceiveReply
@@ -163,7 +169,7 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 
 							// Extract original ICMP message from TimeExceeded body
 							timeExceededBody, ok := receiveMsg.Body.(*icmp.TimeExceeded)
-							if !ok || len(timeExceededBody.Data) < 28 {
+							if !ok || len(timeExceededBody.Data) < ipv4HeaderLen+mimICMPHeaderSize {
 								log.Printf("Invalid ICMP Time-Exceeded body: %+v", receiveMsg)
 								continue
 							}
@@ -174,14 +180,14 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 								ipHeaderLen = 20
 							}
 
-							if len(timeExceededBody.Data) < ipHeaderLen+8 {
+							if len(timeExceededBody.Data) < ipHeaderLen+mimICMPHeaderSize {
 								log.Printf("Invalid ICMP Time-Exceeded message: %+v", receiveMsg)
 								continue
 							}
 
 							// Parse the original ICMP message (protocol 1 for ICMP)
 							originalICMPData := timeExceededBody.Data[ipHeaderLen:]
-							originalICMPMsg, err := icmp.ParseMessage(1, originalICMPData)
+							originalICMPMsg, err := icmp.ParseMessage(protocolNumberICMPv4, originalICMPData)
 							if err != nil {
 								log.Printf("Invalid ICMP Time-Exceeded message: %+v error: %+v", receiveMsg, err)
 								continue
@@ -343,7 +349,7 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 						}
 
 						// 58 is the ICMPv6 protocol number in IPv6 header's protocol field
-						receiveMsg, err := icmp.ParseMessage(58, rb[:nBytes])
+						receiveMsg, err := icmp.ParseMessage(protocolNumberICMPv6, rb[:nBytes])
 						if err != nil {
 							log.Fatalf("failed to parse icmp message: %v", err)
 						}
@@ -358,27 +364,55 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 							Seq:        -1, // if can't determine, use -1
 						}
 
-						icmpBody, ok := receiveMsg.Body.(*icmp.Echo)
-						if !ok {
-							log.Printf("failed to parse icmp body: %+v", receiveMsg)
-							continue
-						}
-
-						if icmpBody.ID != icmp6tr.id {
-							// silently ignore the message that is not for us
-							continue
-						}
-
-						replyObject.Seq = icmpBody.Seq
 						var ty ipv6.ICMPType
 
 						switch receiveMsg.Type {
 						case ipv6.ICMPTypeTimeExceeded:
 							ty = ipv6.ICMPTypeTimeExceeded
+
+							// Extract original ICMP message from TimeExceeded body
+							timeExceededBody, ok := receiveMsg.Body.(*icmp.TimeExceeded)
+
+							// Skip IPv6 header (fixed 40 bytes)
+
+							if !ok || len(timeExceededBody.Data) < ipv6HeaderLen+mimICMPHeaderSize {
+								log.Printf("Invalid ICMP Time-Exceeded body: %+v", receiveMsg)
+								continue
+							}
+
+							// Parse the original ICMP message (protocol 58 for ICMPv6)
+							originalICMPData := timeExceededBody.Data[ipv6HeaderLen:]
+							originalICMPMsg, err := icmp.ParseMessage(protocolNumberICMPv6, originalICMPData)
+							if err != nil {
+								log.Printf("Invalid ICMP Time-Exceeded message: %+v error: %+v", receiveMsg, err)
+								continue
+							}
+
+							echoBody, ok := originalICMPMsg.Body.(*icmp.Echo)
+							if !ok {
+								log.Printf("Invalid ICMP Time-Exceeded message: %+v", receiveMsg)
+								continue
+							}
+
+							replyObject.Seq = echoBody.Seq
+							replyObject.ID = echoBody.ID
+
 						case ipv6.ICMPTypeEchoReply:
 							ty = ipv6.ICMPTypeEchoReply
+							icmpBody, ok := receiveMsg.Body.(*icmp.Echo)
+							if !ok {
+								log.Printf("failed to parse icmp body: %+v", receiveMsg)
+								continue
+							}
+							replyObject.Seq = icmpBody.Seq
+							replyObject.ID = icmpBody.ID
 						default:
 							log.Printf("unknown ICMP message: %+v", receiveMsg)
+							continue
+						}
+
+						if replyObject.ID != icmp6tr.id {
+							// silently ignore the message that is not for us
 							continue
 						}
 
