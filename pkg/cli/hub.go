@@ -21,8 +21,8 @@ var upgrader = websocket.Upgrader{}
 
 type HubCmd struct {
 	PeerCAs       []string `help:"A list of path to the CAs use to verify peer certificates, can be specified multiple times" type:"path"`
-	Address       string   `help:"The address to listen on" default:"localhost:8080"`
-	AddressPublic string   `help:"The address to listen on for public operations" default:"localhost:8082"`
+	Address       string   `help:"The address to listen on for private operations" default:":8080"`
+	AddressPublic string   `help:"The address to listen on for public operations" default:":8082"`
 	WebSocketPath string   `help:"The path to the WebSocket endpoint" default:"/ws"`
 
 	// When the hub is calling functions exposed by the agent, it have to authenticate itself to the agent.
