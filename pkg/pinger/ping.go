@@ -141,28 +141,7 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		go func() {
 			for ev := range tracker.RecvEvC {
 				var wrappedEV *pkgraw.ICMPTrackerEntry = &ev
-				if ev.Raw != nil {
-					wrappedEV = new(pkgraw.ICMPTrackerEntry)
-					*wrappedEV = ev
-					wrappedEV.Raw = make([]interface{}, 0)
-					for _, raw := range ev.Raw {
-
-						if icmpReply, ok := raw.(pkgraw.ICMPReceiveReply); ok {
-							clonedICMPReply := new(pkgraw.ICMPReceiveReply)
-							*clonedICMPReply = icmpReply
-
-							ptrAnswers, err := resolver.LookupAddr(ctx, clonedICMPReply.Peer)
-							if err == nil {
-								clonedICMPReply.PeerRDNS = ptrAnswers
-							}
-
-							wrappedEV.Raw = append(wrappedEV.Raw, clonedICMPReply)
-							continue
-						}
-						wrappedEV.Raw = append(wrappedEV.Raw, raw)
-					}
-				}
-
+				wrappedEV, _ = ev.ResolveRDNS(ctx, resolver)
 				outputEVChan <- PingEvent{Data: wrappedEV}
 
 				if pingRequest.TotalPkts != nil {

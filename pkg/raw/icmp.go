@@ -45,6 +45,16 @@ type ICMPReceiveReply struct {
 	ICMPTypeV6 *ipv6.ICMPType
 }
 
+func (icmpReply *ICMPReceiveReply) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPReceiveReply, error) {
+	clonedICMPReply := new(ICMPReceiveReply)
+	*clonedICMPReply = *icmpReply
+	ptrAnswers, err := resolver.LookupAddr(ctx, clonedICMPReply.Peer)
+	if err == nil {
+		clonedICMPReply.PeerRDNS = ptrAnswers
+	}
+	return clonedICMPReply, err
+}
+
 type ICMP4Transceiver struct {
 	id             int
 	packetConn     net.PacketConn

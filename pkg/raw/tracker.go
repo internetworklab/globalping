@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"time"
 )
 
@@ -20,6 +21,22 @@ type ICMPTrackerEntry struct {
 	ReceivedAt   []time.Time
 	Timer        *time.Timer `json:"-"`
 	Raw          []interface{}
+}
+
+func (itEnt *ICMPTrackerEntry) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPTrackerEntry, error) {
+	wrappedEV := new(ICMPTrackerEntry)
+	*wrappedEV = *itEnt
+	wrappedEV.Raw = make([]interface{}, 0)
+	for _, raw := range itEnt.Raw {
+		if icmpReply, ok := raw.(ICMPReceiveReply); ok {
+			clonedICMPReply, _ := icmpReply.ResolveRDNS(ctx, resolver)
+			wrappedEV.Raw = append(wrappedEV.Raw, clonedICMPReply)
+			continue
+		}
+		wrappedEV.Raw = append(wrappedEV.Raw, raw)
+	}
+
+	return wrappedEV, nil
 }
 
 func (itEnt *ICMPTrackerEntry) ReadonlyClone() *ICMPTrackerEntry {
