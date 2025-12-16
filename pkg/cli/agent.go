@@ -48,13 +48,10 @@ type AgentCmd struct {
 }
 
 type PingHandler struct {
-	hub *pkgthrottle.SharedThrottleHub
 }
 
-func NewPingHandler(hub *pkgthrottle.SharedThrottleHub) *PingHandler {
+func NewPingHandler() *PingHandler {
 	ph := new(PingHandler)
-	ph.hub = hub
-
 	return ph
 }
 
@@ -70,7 +67,6 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	pinger := pkgpinger.NewSimplePinger(pkgpinger.SimplePingerConfig{
 		PingRequest: pingRequest,
-		ProxyHub:    ph.hub,
 	})
 	for ev := range pinger.Ping(ctx) {
 		if ev.Error != nil {
@@ -124,14 +120,7 @@ func (agentCmd *AgentCmd) Run() error {
 	smoother := pkgthrottle.NewBurstSmoother(time.Duration(1000.0/float64(agentCmd.SharedQuota)) * time.Millisecond)
 	smoother.Run()
 
-	hub := pkgthrottle.NewICMPTransceiveHub(&pkgthrottle.SharedThrottleHubConfig{
-		TSSched:  tsSched,
-		Throttle: throttle,
-		Smoother: smoother,
-	})
-	hub.Run(ctx)
-
-	handler := NewPingHandler(hub)
+	handler := NewPingHandler()
 
 	muxer := http.NewServeMux()
 	muxer.Handle("/simpleping", handler)

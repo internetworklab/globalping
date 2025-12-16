@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"slices"
 	"time"
 
 	"github.com/google/btree"
@@ -19,7 +18,6 @@ const (
 	TSSchedEVNewSource    TSSchedEVType = "new_source"
 	TSSchedEVNewDataTask  TSSchedEVType = "new_data_task"
 	TSSchedEVNodeDrained  TSSchedEVType = "node_drained"
-	TSSchedEVNewHook      TSSchedEVType = "new_hook"
 	TSSchedEVRemoveSource TSSchedEVType = "remove_source"
 )
 
@@ -40,11 +38,10 @@ type TimeSlicedEVLoopSched struct {
 	// we use this field for generating unique node id
 	nodesAdded map[int]*TSSchedSourceNode
 
+	nodeIdGenerator int
+
 	defaultTimeSlice *time.Duration
 	maximumChunkSize int
-
-	// evtype -> hook name -> handler function
-	customEVHandlers map[TSSchedEVType]map[string]func(evObj *TSSchedEVObject) error
 }
 
 type TimeSlicedEVLoopSchedConfig struct {
@@ -65,7 +62,6 @@ func NewTimeSlicedEVLoopSched(config *TimeSlicedEVLoopSchedConfig) (*TimeSlicedE
 		numEventsPassed:  new(int),
 		nodesAdded:       make(map[int]*TSSchedSourceNode),
 		maximumChunkSize: defaultMaximumChunkSize,
-		customEVHandlers: make(map[TSSchedEVType]map[string]func(evObj *TSSchedEVObject) error),
 	}
 	btreeOrder := 2
 	if config.BTreeOrder != nil {
@@ -100,40 +96,6 @@ type TSSchedCustomEVHandlerSubmission struct {
 	EVType   TSSchedEVType
 	HookName string
 	Handler  func(evObj *TSSchedEVObject) error
-}
-
-func (tsSched *TimeSlicedEVLoopSched) RegisterCustomEVHandler(ctx context.Context, evType TSSchedEVType, hookName string, handler func(evObj *TSSchedEVObject) error) error {
-	allowedCustomHookEVTypes := []TSSchedEVType{TSSchedEVNodeDrained}
-	if !slices.Contains(allowedCustomHookEVTypes, evType) {
-		return fmt.Errorf("invalid ev type for custom hook: %s, allowed types: %v", evType, allowedCustomHookEVTypes)
-	}
-
-	evSubCh, ok := <-tsSched.evCh
-	if !ok {
-		return fmt.Errorf("ev channel is already closed")
-	}
-
-	evObj := TSSchedEVObject{
-		Type: TSSchedEVNewHook,
-		Payload: TSSchedCustomEVHandlerSubmission{
-			HookName: hookName,
-			Handler:  handler,
-			EVType:   evType,
-		},
-		Result: make(chan error),
-	}
-
-	evSubCh <- evObj
-
-	select {
-	case err, ok := <-evObj.Result:
-		if !ok {
-			return nil
-		}
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 func (tsSched *TimeSlicedEVLoopSched) RemoveInput(ctx context.Context, opaqueSourceId interface{}) error {
@@ -186,27 +148,14 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 				log.Printf("[DBG] tssched received event: %+v", evRequest)
 
 				switch evRequest.Type {
-				case TSSchedEVNewHook:
-					evPayloadHook, ok := evRequest.Payload.(TSSchedCustomEVHandlerSubmission)
-					if !ok {
-						panic("unexpected ev payload, it's not of a type of struct TSSchedCustomEVHandlerSubmission")
-					}
-					evType := evPayloadHook.EVType
-					if _, ok := tsSched.customEVHandlers[evType]; !ok {
-						tsSched.customEVHandlers[evType] = make(map[string]func(evObj *TSSchedEVObject) error)
-					}
-					tsSched.customEVHandlers[evType][evPayloadHook.HookName] = evPayloadHook.Handler
-
-					log.Printf("custom ev handler %s for ev type %s is registered", evPayloadHook.HookName, evType)
-
-					evRequest.Result <- nil
 				case TSSchedEVNewSource:
 					inputChanSubmission, ok := evRequest.Payload.(*TSSchedInputChanSubmission)
 					if !ok {
 						panic("unexpected ev payload, it's not of a type of <-chan interface{}")
 					}
 
-					newNodeId := len(tsSched.nodesAdded)
+					newNodeId := tsSched.nodeIdGenerator
+					tsSched.nodeIdGenerator++
 					newNodeObject := &TSSchedSourceNode{
 						Id:              newNodeId,
 						InC:             inputChanSubmission.InputChan,
@@ -227,12 +176,7 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 						panic("unexpected ev payload, it's not of a type of struct *Node")
 					}
 
-					if _, ok := tsSched.nodesAdded[evPayloadNode.Id]; !ok {
-						// node is already removed somehow, just throw away all its unread content
-						evPayloadNode.CurrentDataBlob.NextRead = evPayloadNode.CurrentDataBlob.Length
-						evRequest.Result <- nil
-						continue
-					}
+					log.Printf("[DBG] tssched received new data task for node with id %d", evPayloadNode.Id)
 
 					if tsSched.nodeQueue.ReplaceOrInsert(evPayloadNode) != nil {
 						panic("the node is already in the queue, which is unexpected")
@@ -251,11 +195,21 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 						panic("head node in the queue is nil")
 					}
 
+					if _, ok := tsSched.nodesAdded[nodeObject.Id]; !ok {
+						// node is already removed somehow, just throw away all its unread content
+						log.Printf("[DBG] draining node with id %d, but it's already removed", nodeObject.Id)
+						nodeObject.CurrentDataBlob.NextRead = nodeObject.CurrentDataBlob.Length
+						evRequest.Result <- nil
+						continue
+					}
+
 					itemsCopied := nodeObject.Run(tsSched.outC, nodeObject, *tsSched.defaultTimeSlice)
 					nodeObject.ScheduledTime += 1.0
-					nodeObject.NumItemsCopied[0] = nodeObject.NumItemsCopied[1]
-					nodeObject.NumItemsCopied[1] = nodeObject.NumItemsCopied[2]
-					nodeObject.NumItemsCopied[2] = itemsCopied
+					if itemsCopied > 0 {
+						nodeObject.NumItemsCopied[0] = nodeObject.NumItemsCopied[1]
+						nodeObject.NumItemsCopied[1] = nodeObject.NumItemsCopied[2]
+						nodeObject.NumItemsCopied[2] = itemsCopied
+					}
 
 					log.Printf("[DBG] tssched copied %d items to output channel", itemsCopied)
 
@@ -265,14 +219,10 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 					if !ok {
 						panic("unexpected ev payload, it's not of a type of int")
 					}
+					log.Printf("[DBG] tssched removing node with id %d", deadNodeId)
 					delete(tsSched.nodesAdded, deadNodeId)
 
-					if handlers, ok := tsSched.customEVHandlers[TSSchedEVNodeDrained]; ok {
-						for hookName, handler := range handlers {
-							log.Printf("executing custom ev handler %s for ev type %s", hookName, TSSchedEVNodeDrained)
-							handler(&evRequest)
-						}
-					}
+					evRequest.Result <- nil
 				default:
 					panic(fmt.Sprintf("unknown event type: %s", evRequest.Type))
 				}
@@ -337,6 +287,7 @@ func (blob *TSSchedDataBlob) CopyTo(dst chan<- interface{}, maximumTimeSlice tim
 	for numItemsCopied < blob.Length-blob.NextRead {
 		select {
 		case <-timeout:
+			log.Printf("[DBG] timeout Maximum time slice is %s", maximumTimeSlice)
 			return numItemsCopied
 		case dst <- blob.Chunk[blob.NextRead+numItemsCopied]:
 			numItemsCopied++

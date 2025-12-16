@@ -85,7 +85,7 @@ func (mimoSched *MIMOScheduler) Run(ctx context.Context) {
 				if !ok {
 					return
 				}
-				log.Printf("[DBG] tssched received packet: %+v", packetraw)
+				log.Printf("[DBG] mimo sched received packet: %+v", packetraw)
 
 				packet, ok := packetraw.(MIMOPacketizedItem)
 				if !ok {
@@ -102,7 +102,9 @@ func (mimoSched *MIMOScheduler) Run(ctx context.Context) {
 					continue
 				}
 
+				log.Printf("[DBG] mimo sending packet to default output channel: %+v", packet.Datum)
 				mimoSched.DefaultOutC <- packet.Datum
+				log.Printf("[DBG] mimo sent packet to default output channel: %+v", packet.Datum)
 			}
 		}
 	}()

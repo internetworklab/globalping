@@ -12,24 +12,20 @@ import (
 	"time"
 
 	pkgraw "example.com/rbmq-demo/pkg/raw"
-	pkgthrottle "example.com/rbmq-demo/pkg/throttle"
 	pkgutils "example.com/rbmq-demo/pkg/utils"
 )
 
 type SimplePinger struct {
 	pingRequest *SimplePingRequest
-	proxyHub    *pkgthrottle.SharedThrottleHub
 }
 
 type SimplePingerConfig struct {
 	PingRequest *SimplePingRequest
-	ProxyHub    *pkgthrottle.SharedThrottleHub
 }
 
 func NewSimplePinger(cfg SimplePingerConfig) *SimplePinger {
 	sp := new(SimplePinger)
 	sp.pingRequest = cfg.PingRequest
-	sp.proxyHub = cfg.ProxyHub
 	return sp
 }
 
@@ -38,7 +34,6 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 	go func() {
 		defer close(outputEVChan)
 
-		ph := sp.proxyHub
 		pingRequest := sp.pingRequest
 		var err error
 
@@ -123,14 +118,6 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			transceiver = icmp6tr
 		}
 
-		throttleProxySrc := make(chan interface{})
-		defer close(throttleProxySrc)
-
-		proxyCh, err := ph.CreateProxy(ctx, throttleProxySrc)
-		if err != nil {
-			log.Fatalf("failed to create proxy: %v", err)
-		}
-
 		var pkgWg sync.WaitGroup
 		defer func() {
 			if pingRequest.TotalPkts != nil {
@@ -172,25 +159,7 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		}()
 
 		senderCh := transceiver.GetSender()
-
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case reqraw := <-proxyCh:
-					log.Printf("[DBG] received pending icmp echo request: %+v", reqraw)
-					req, ok := reqraw.(pkgraw.ICMPSendRequest)
-					if !ok {
-						log.Fatal("wrong format")
-					}
-					senderCh <- req
-					log.Printf("[DBG] sent icmp echo request: %+v", req)
-
-					tracker.MarkSent(req.Seq, req.TTL)
-				}
-			}
-		}()
+		defer close(senderCh)
 
 		numPktsSent := 0
 		for {
@@ -203,8 +172,10 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					TTL: pingRequest.TTL[numPktsSent%len(pingRequest.TTL)],
 					Dst: dst,
 				}
-				throttleProxySrc <- req
-				log.Printf("[DBG] generated icmp echo request: %+v", req)
+				senderCh <- req
+				log.Printf("[DBG] sent icmp echo request: %+v", req)
+
+				tracker.MarkSent(req.Seq, req.TTL)
 
 				numPktsSent++
 				if pingRequest.TotalPkts != nil {
