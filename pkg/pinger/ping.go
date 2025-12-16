@@ -173,7 +173,6 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					Dst: dst,
 				}
 				senderCh <- req
-				log.Printf("[DBG] sent icmp echo request: %+v", req)
 
 				tracker.MarkSent(req.Seq, req.TTL)
 
