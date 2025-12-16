@@ -150,7 +150,7 @@ function PingResultDisplay(props: {
     return () => {
       cancelStream();
     };
-  });
+  }, [pendingTask.taskId, running]);
 
   return (
     <Fragment>
@@ -211,7 +211,7 @@ function PingResultDisplay(props: {
                       }}
                     >
                       {latency !== null && latency !== undefined
-                        ? `${latency} ms`
+                        ? `${latency.toFixed(3)} ms`
                         : "—"}
                     </TableCell>
                   );
