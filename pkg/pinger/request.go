@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	pkgutils "example.com/rbmq-demo/pkg/utils"
 )
@@ -20,7 +22,7 @@ type SimplePingRequest struct {
 	PreferV6                   *bool
 	TotalPkts                  *int
 	Resolver                   *string
-	TTL                        []int
+	TTL                        TTLGenerator
 	ResolveTimeoutMilliseconds *int
 }
 
@@ -92,14 +94,27 @@ func ParseSimplePingRequest(r *http.Request) (*SimplePingRequest, error) {
 	}
 
 	if ttl := r.URL.Query().Get(ParamTTL); ttl != "" {
-
-		ttls, err := pkgutils.ParseInts(ttl)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse ttl: %v", err)
+		if strings.HasPrefix(ttl, "auto(") || ttl == "auto" {
+			autoTTL, err := ParseToAutoTTL(ttl)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse ttl: %v", err)
+			}
+			result.TTL = autoTTL
+		} else if strings.HasPrefix(ttl, "range(") {
+			rangeTTL, err := ParseToRangeTTL(ttl)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse ttl: %v", err)
+			}
+			result.TTL = rangeTTL
+		} else {
+			ints, err := pkgutils.ParseInts(ttl)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse ttl: %v", err)
+			}
+			result.TTL = &RangeTTL{TTLs: ints}
 		}
-		result.TTL = ttls
 	} else {
-		result.TTL = []int{defaultTTL}
+		result.TTL = &RangeTTL{TTLs: []int{defaultTTL}}
 	}
 
 	if preferV4 := r.URL.Query().Get(ParamPreferV4); preferV4 != "" {
@@ -161,15 +176,102 @@ func (pr *SimplePingRequest) ToURLValues() url.Values {
 		vals.Add(ParamResolver, *pr.Resolver)
 	}
 	if pr.TTL != nil {
-		ttls := make([]string, 0)
-		for _, ttl := range pr.TTL {
-			ttls = append(ttls, strconv.Itoa(ttl))
-		}
-		vals.Add(ParamTTL, strings.Join(ttls, ","))
+		vals.Add(ParamTTL, pr.TTL.String())
 	}
 	if pr.ResolveTimeoutMilliseconds != nil {
 		vals.Add(ParamResolveTimeoutMilliseconds, strconv.Itoa(*pr.ResolveTimeoutMilliseconds))
 	}
 
 	return vals
+}
+
+type TTLGenerator interface {
+	GetNext() int
+	Reset()
+	String() string
+}
+
+type AutoTTL struct {
+	Start int
+	Next  int
+	lock  sync.Mutex `json:"-"`
+}
+
+func ParseToAutoTTL(s string) (*AutoTTL, error) {
+	if s == "auto" {
+		return &AutoTTL{Start: 1, Next: 1}, nil
+	}
+
+	pattern1 := regexp.MustCompile(`^auto\((\d+)\)$`)
+	if result := pattern1.FindStringSubmatch(s); result != nil {
+		start, err := strconv.Atoi(result[1])
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse auto ttl: %v", err)
+		}
+		return &AutoTTL{Start: start, Next: start}, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse auto ttl: %s", s)
+}
+
+func (at *AutoTTL) GetNext() int {
+	at.lock.Lock()
+	defer at.lock.Unlock()
+
+	retVal := at.Next
+	at.Next++
+	return retVal
+}
+
+func (at *AutoTTL) Reset() {
+	at.lock.Lock()
+	defer at.lock.Unlock()
+
+	at.Next = at.Start
+}
+
+func (at *AutoTTL) String() string {
+	return fmt.Sprintf("auto(%d)", at.Start)
+}
+
+type RangeTTL struct {
+	TTLs []int
+	idx  int        `json:"-"`
+	lock sync.Mutex `json:"-"`
+}
+
+func ParseToRangeTTL(s string) (*RangeTTL, error) {
+	ints, err := pkgutils.ParseInts(s)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse range ttl: %v", err)
+	}
+	return &RangeTTL{TTLs: ints}, nil
+}
+
+func (rt *RangeTTL) GetNext() int {
+	rt.lock.Lock()
+	defer rt.lock.Unlock()
+
+	retVal := rt.TTLs[rt.idx]
+	rt.idx++
+	if rt.idx >= len(rt.TTLs) {
+		rt.idx = 0
+	}
+
+	return retVal
+}
+
+func (rt *RangeTTL) Reset() {
+	rt.lock.Lock()
+	defer rt.lock.Unlock()
+
+	rt.idx = 0
+}
+
+func (rt *RangeTTL) String() string {
+	segs := make([]string, 0)
+	for _, ttl := range rt.TTLs {
+		segs = append(segs, strconv.Itoa(ttl))
+	}
+	return strings.Join(segs, ",")
 }

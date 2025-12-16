@@ -43,6 +43,9 @@ type ICMPReceiveReply struct {
 	// the Src of the icmp echo reply, in string
 	Peer string
 
+	PeerRaw net.Addr `json:"-"`
+	PeerRawIP *net.IPAddr `json:"-"`
+
 	PeerRDNS []string
 
 	ReceivedAt time.Time
@@ -159,6 +162,11 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 							Peer:       peerAddr.String(),
 							TTL:        ctrlMsg.TTL,
 							Seq:        -1, // if can't determine, use -1
+							PeerRaw:    peerAddr,
+						}
+						if ipAddr, ok := peerAddr.(*net.IPAddr); ok {
+							log.Printf("[DBG] ICMP reply hint: peer raw net.Addr is a net.IPAddr")
+							replyObject.PeerRawIP = ipAddr
 						}
 
 						var ty ipv4.ICMPType

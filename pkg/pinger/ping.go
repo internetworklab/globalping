@@ -131,6 +131,14 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			for ev := range tracker.RecvEvC {
 				var wrappedEV *pkgraw.ICMPTrackerEntry = &ev
 				wrappedEV, _ = ev.ResolveRDNS(ctx, resolver)
+
+				if wrappedEV.IsFromLastHop(dst) {
+					if autoTTL, ok := pingRequest.TTL.(*AutoTTL); ok {
+						log.Printf("[DBG] ICMP reply from last hop, resetting auto TTL")
+						autoTTL.Reset()
+					}
+				}
+
 				outputEVChan <- PingEvent{Data: wrappedEV}
 
 				if pingRequest.TotalPkts != nil {
@@ -167,9 +175,10 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			case <-ctx.Done():
 				return
 			default:
+				ttl := pingRequest.TTL.GetNext()
 				req := pkgraw.ICMPSendRequest{
 					Seq: numPktsSent + 1,
-					TTL: pingRequest.TTL[numPktsSent%len(pingRequest.TTL)],
+					TTL: ttl,
 					Dst: dst,
 				}
 				senderCh <- req

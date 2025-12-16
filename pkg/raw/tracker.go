@@ -23,6 +23,33 @@ type ICMPTrackerEntry struct {
 	Raw          []interface{}
 }
 
+func (itEnt *ICMPTrackerEntry) IsFromLastHop(dst net.IPAddr) bool {
+	if itEnt.Raw == nil {
+		return false
+	}
+
+	for _, raw := range itEnt.Raw {
+		icmpReply, ok := raw.(ICMPReceiveReply)
+		if !ok {
+			continue
+		}
+
+		if icmpReply.PeerRawIP != nil && dst.IP.Equal(icmpReply.PeerRawIP.IP) {
+			return true
+		}
+
+		if icmpReply.PeerRaw != nil && icmpReply.PeerRaw.String() == dst.IP.String() {
+			return true
+		}
+
+		if dst.String() == icmpReply.Peer {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (itEnt *ICMPTrackerEntry) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPTrackerEntry, error) {
 	wrappedEV := new(ICMPTrackerEntry)
 	*wrappedEV = *itEnt
