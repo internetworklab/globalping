@@ -97,8 +97,6 @@ export function generateFakePingSampleStream(
             };
             seq++;
 
-            console.log("[dbg] enqueueing sample:", sample);
-
             controller.enqueue(sample);
           }
         }
@@ -239,6 +237,8 @@ class PingEventAdapter extends TransformStream<RawPingEvent, PingSample> {
 }
 
 function pingSampleFromEvent(event: RawPingEvent): PingSample | undefined {
+  console.log('[dbg] raw ping sample TTL=', event.data?.TTL);
+
   const from = event.metadata?.from || "";
   const target = event.metadata?.target || "";
 
@@ -372,7 +372,13 @@ export function generatePingSampleStream(
                   return;
                 }
                 if (value && !controlscope.stopped) {
-                  console.log("[dbg] enqueueing sample:", value);
+                  if (value.lastHop) {
+                    console.log(
+                      "[dbg] last hop ttl reset to=",
+                      value.ttl,
+                      value
+                    );
+                  }
                   controller.enqueue(value);
                 }
                 push();

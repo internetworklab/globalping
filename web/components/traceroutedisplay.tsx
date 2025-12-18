@@ -195,6 +195,7 @@ function getDispEntries(
   const dispEntries: DisplayEntry[] = [];
   const currentTabEntries = hopEntries[tabValue];
   if (currentTabEntries) {
+    console.log("[dbg] rendering max hop=", currentTabEntries.maxHop);
     for (let i = 1; i <= currentTabEntries.maxHop; i++) {
       if (i in currentTabEntries.hopEntries) {
         dispEntries.push({

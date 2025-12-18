@@ -40,7 +40,6 @@ func (itEnt *ICMPTrackerEntry) MarkLastHop(dst net.IPAddr) (clonedICMPTrackerEnt
 
 		clonedICMPReply, isThisLastHop := icmpReply.MarkLastHop(dst)
 		if isThisLastHop {
-			log.Printf("[DBG] found last hop: %+v", clonedICMPReply)
 			foundLastHop = true
 		}
 

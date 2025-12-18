@@ -137,23 +137,12 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			payloadManager = NewPayloadManager(*pingRequest.RandomPayloadSize)
 		}
 
+		ttlCh := make(chan int, 1)
+		ttlCh <- pingRequest.TTL.GetNext()
+
 		go func() {
 			for ev := range tracker.RecvEvC {
 				var wrappedEV *pkgraw.ICMPTrackerEntry = &ev
-				wrappedEV, err = ev.ResolveRDNS(ctx, resolver)
-				if err != nil {
-					log.Printf("failed to resolve RDNS: %v", err)
-					err = nil
-				}
-
-				if sp.ipinfoAdapter != nil {
-					wrappedEV, err = wrappedEV.ResolveIPInfo(ctx, sp.ipinfoAdapter)
-					if err != nil {
-						log.Printf("failed to resolve IP info: %v", err)
-						err = nil
-					}
-				}
-
 				if dst.IP != nil {
 					var foundLastHop bool
 					wrappedEV, foundLastHop = wrappedEV.MarkLastHop(dst)
@@ -163,6 +152,23 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 							autoTTL.Reset()
 						}
 					}
+				}
+				nextTTL := pingRequest.TTL.GetNext()
+				log.Printf("[DBG] next TTL=%d", nextTTL)
+				ttlCh <- nextTTL
+
+				if sp.ipinfoAdapter != nil {
+					wrappedEV, err = wrappedEV.ResolveIPInfo(ctx, sp.ipinfoAdapter)
+					if err != nil {
+						log.Printf("failed to resolve IP info: %v", err)
+						err = nil
+					}
+				}
+
+				wrappedEV, err = wrappedEV.ResolveRDNS(ctx, resolver)
+				if err != nil {
+					log.Printf("failed to resolve RDNS: %v", err)
+					err = nil
 				}
 
 				if payloadManager != nil {
@@ -180,7 +186,6 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 
 					pkgWg.Done()
 					if ev.Seq >= *pingRequest.TotalPkts {
-
 						return
 					}
 				}
@@ -209,7 +214,7 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			case <-ctx.Done():
 				return
 			default:
-				ttl := pingRequest.TTL.GetNext()
+				ttl := <-ttlCh
 
 				req := pkgraw.ICMPSendRequest{
 					Seq: numPktsSent + 1,
