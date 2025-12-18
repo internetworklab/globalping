@@ -154,7 +154,6 @@ function updateTabState(tabState: TabState, pingSample: PingSample): TabState {
       ),
     };
     if (pingSample.lastHop) {
-      console.log("[dbg] updating maxHop to", pingSample.ttl);
       newTabState.maxHop = pingSample.ttl;
     }
   }
@@ -195,7 +194,6 @@ function getDispEntries(
   const dispEntries: DisplayEntry[] = [];
   const currentTabEntries = hopEntries[tabValue];
   if (currentTabEntries) {
-    console.log("[dbg] rendering max hop=", currentTabEntries.maxHop);
     for (let i = 1; i <= currentTabEntries.maxHop; i++) {
       if (i in currentTabEntries.hopEntries) {
         dispEntries.push({
