@@ -12,7 +12,7 @@ import {
   Tab,
   Tabs,
 } from "@mui/material";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { TaskCloseIconButton } from "@/components/taskclose";
 import { PlayPauseButton } from "./playpause";
 import { getLatencyColor } from "./colorfunc";
@@ -47,53 +47,15 @@ type TracerouteStatsEntry = {
   lost: number;
 };
 
-type TracerouteDispEntry = {
+type HopEntryState = {
   peers: TraceroutePeerEntry[];
   rtts: TracerouteRTTStatsEntry;
   stats: TracerouteStatsEntry;
 };
 
-const fakeEntries: TracerouteDispEntry[] = [
-  {
-    peers: [
-      {
-        seq: 3,
-        ip: {
-          ip: "1.1.1.1",
-          rdns: "one.one.one.one",
-        },
-        asn: "AS65001",
-        location: "California",
-        isp: "China Telecom",
-      },
-      {
-        seq: 2,
-        ip: {
-          ip: "2.2.2.2",
-        },
-        asn: "AS65002",
-        location: "London",
-        isp: "British Telecom",
-      },
-    ],
-    rtts: {
-      current: 13.123,
-      min: 10.101,
-      median: 12.121,
-      max: 14.141,
-      history: [10.101, 12.121, 14.141],
-    },
-    stats: {
-      sent: 10,
-      replied: 8,
-      lost: 2,
-    },
-  },
-];
-
 type TabState = {
   maxHop: number;
-  hopEntries: Record<number, TracerouteDispEntry>;
+  hopEntries: Record<number, HopEntryState>;
 };
 type PageState = Record<string, TabState>;
 
@@ -110,22 +72,52 @@ function getMedian(history: number[]): number {
   return history[mid_idx];
 }
 
-function updatePageState(
-  pageState: PageState,
+function updateHopEntryState(
+  hopEntryState: HopEntryState,
   pingSample: PingSample
-): PageState {
-  const newState = { ...pageState };
+): HopEntryState {
+  const newEntry = { ...hopEntryState };
+  if (pingSample.latencyMs !== undefined && pingSample.latencyMs !== null) {
+    newEntry.rtts.current = pingSample.latencyMs;
+    if (pingSample.latencyMs < newEntry.rtts.min) {
+      newEntry.rtts.min = pingSample.latencyMs;
+    }
+    if (pingSample.latencyMs > newEntry.rtts.max) {
+      newEntry.rtts.max = pingSample.latencyMs;
+    }
+    newEntry.rtts.history = [...newEntry.rtts.history, pingSample.latencyMs];
+    newEntry.rtts.median = getMedian(newEntry.rtts.history);
+    newEntry.stats.replied++;
+  } else {
+    newEntry.stats.lost++;
+  }
+  newEntry.stats.sent++;
 
-  if (!(pingSample.from in newState)) {
-    newState[pingSample.from] = {
-      maxHop: 1,
-      hopEntries: {},
+  if (pingSample.seq !== undefined && pingSample.seq !== null) {
+    const newPeerEntry: TraceroutePeerEntry = {
+      ip: {
+        ip: pingSample.peer || "",
+        rdns: pingSample.peerRdns,
+      },
+      seq: pingSample.seq,
+      asn: pingSample.peerASN,
+      location: pingSample.peerLocation,
+      isp: pingSample.peerISP,
     };
+    newEntry.peers = [...newEntry.peers, newPeerEntry];
+    // high seq first
+    newEntry.peers.sort((a, b) => b.seq - a.seq);
   }
 
-  const newTabState = { ...newState[pingSample.from] };
+  return newEntry;
+}
+
+function updateTabState(tabState: TabState, pingSample: PingSample): TabState {
+  const newTabState = { ...tabState };
+
   if (pingSample.ttl !== undefined && pingSample.ttl !== null) {
     if (pingSample.ttl > newTabState.maxHop) {
+      console.log("[dbg] updating maxHop to", pingSample.ttl);
       newTabState.maxHop = pingSample.ttl;
     }
 
@@ -134,9 +126,9 @@ function updatePageState(
         peers: [],
         rtts: {
           current: 0,
-          min: 0,
+          min: Infinity,
           median: 0,
-          max: 0,
+          max: -Infinity,
           history: [],
         },
         stats: {
@@ -147,63 +139,46 @@ function updatePageState(
       };
     }
 
-    const newEntry = { ...newTabState.hopEntries[pingSample.ttl] };
-    if (pingSample.latencyMs !== undefined && pingSample.latencyMs !== null) {
-      newEntry.rtts.current = pingSample.latencyMs;
-      if (pingSample.latencyMs < newEntry.rtts.min) {
-        newEntry.rtts.min = pingSample.latencyMs;
-      }
-      if (pingSample.latencyMs > newEntry.rtts.max) {
-        newEntry.rtts.max = pingSample.latencyMs;
-      }
-      newEntry.rtts.history = [...newEntry.rtts.history, pingSample.latencyMs];
-      newEntry.rtts.median = getMedian(newEntry.rtts.history);
-      newEntry.stats.replied++;
-    } else {
-      newEntry.stats.lost++;
-    }
-    newEntry.stats.sent++;
-
-    if (pingSample.seq !== undefined && pingSample.seq !== null) {
-      const newPeerEntry: TraceroutePeerEntry = {
-        ip: {
-          ip: pingSample.peer || "",
-          rdns: pingSample.peerRdns,
-        },
-        seq: pingSample.seq,
-        asn: pingSample.peerASN,
-        location: pingSample.peerLocation,
-        isp: pingSample.peerISP,
-      };
-      newEntry.peers = [...newEntry.peers, newPeerEntry];
-      // high seq first
-      newEntry.peers.sort((a, b) => b.seq - a.seq);
-    }
-
-    newTabState.hopEntries[pingSample.ttl] = newEntry;
+    newTabState.maxHop = Math.max(newTabState.maxHop, pingSample.ttl);
+    newTabState.hopEntries[pingSample.ttl] = updateHopEntryState(
+      newTabState.hopEntries[pingSample.ttl],
+      pingSample
+    );
   }
 
+  return newTabState;
+}
+
+function updatePageState(
+  pageState: PageState,
+  pingSample: PingSample
+): PageState {
+  // debugger;
+  const newState = { ...pageState };
+
+  if (!(pingSample.from in newState)) {
+    newState[pingSample.from] = {
+      maxHop: 1,
+      hopEntries: {},
+    };
+  }
+
+  newState[pingSample.from] = updateTabState(
+    newState[pingSample.from],
+    pingSample
+  );
   return newState;
 }
 
 type DisplayEntry = {
   hop: number;
-  entry: TracerouteDispEntry;
+  entry: HopEntryState;
 };
 
-export function TracerouteResultDisplay(props: {}) {
-  const [hopEntries, setHopEntries] = useState<PageState>({
-    agent1: {
-      maxHop: 1,
-      hopEntries: {
-        1: fakeEntries[0],
-      },
-    },
-  });
-
-  const fakeSources = ["agent1", "agent2", "agent3"];
-  const [tabValue, setTabValue] = useState(fakeSources[0]);
-
+function getDispEntries(
+  hopEntries: PageState,
+  tabValue: string
+): DisplayEntry[] {
   const dispEntries: DisplayEntry[] = [];
   const currentTabEntries = hopEntries[tabValue];
   if (currentTabEntries) {
@@ -216,6 +191,59 @@ export function TracerouteResultDisplay(props: {}) {
       }
     }
   }
+  return dispEntries;
+}
+
+export function TracerouteResultDisplay(props: {}) {
+  const [hopEntries, setHopEntries] = useState<PageState>({});
+
+  const fakeSources = ["agent1", "agent2", "agent3"];
+  const [tabValue, setTabValue] = useState(fakeSources[0]);
+
+  useEffect(() => {
+    const pingSample1: PingSample = {
+      from: "agent1",
+      target: "1.1.1.1",
+      latencyMs: 100,
+      ttl: 1,
+      seq: 1,
+      peer: "1.1.1.1",
+      peerRdns: "one.one.one.one",
+      peerASN: "AS65001",
+      peerLocation: "California",
+      peerISP: "ATT",
+      peerExactLocation: {
+        Latitude: 37.7749,
+        Longitude: -122.4194,
+      },
+    };
+    const pingSample2: PingSample = {
+      from: "agent1",
+      target: "1.1.1.1",
+      latencyMs: 90,
+      ttl: 2,
+      seq: 2,
+      peer: "1.1.1.2",
+      peerRdns: "one.one.one.two",
+      peerASN: "AS65002",
+      peerLocation: "California",
+      peerISP: "China Telecom",
+      peerExactLocation: {
+        Latitude: 34.0522,
+        Longitude: -118.2437,
+      },
+    };
+
+    window.setTimeout(() => {
+      setHopEntries((prev) => updatePageState(prev, pingSample1));
+    }, 1000);
+    window.setTimeout(() => {
+      setHopEntries((prev) => updatePageState(prev, pingSample2));
+    }, 2000);
+    return () => {
+      setHopEntries({});
+    };
+  }, []);
 
   return (
     <Fragment>
@@ -268,7 +296,7 @@ export function TracerouteResultDisplay(props: {}) {
             </TableRow>
           </TableHead>
           <TableBody>
-            {dispEntries.map(({ hop, entry }) => {
+            {getDispEntries(hopEntries, tabValue).map(({ hop, entry }) => {
               return (
                 <TableRow key={hop}>
                   <TableCell>{hop}</TableCell>
