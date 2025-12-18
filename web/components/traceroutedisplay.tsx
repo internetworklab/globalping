@@ -117,33 +117,31 @@ function updateTabState(tabState: TabState, pingSample: PingSample): TabState {
 
   if (pingSample.ttl !== undefined && pingSample.ttl !== null) {
     if (pingSample.ttl > newTabState.maxHop) {
-      console.log("[dbg] updating maxHop to", pingSample.ttl);
       newTabState.maxHop = pingSample.ttl;
     }
 
-    if (!(pingSample.ttl in newTabState.hopEntries)) {
-      newTabState.hopEntries[pingSample.ttl] = {
-        peers: [],
-        rtts: {
-          current: 0,
-          min: Infinity,
-          median: 0,
-          max: -Infinity,
-          history: [],
-        },
-        stats: {
-          sent: 0,
-          replied: 0,
-          lost: 0,
-        },
-      };
-    }
-
     newTabState.maxHop = Math.max(newTabState.maxHop, pingSample.ttl);
-    newTabState.hopEntries[pingSample.ttl] = updateHopEntryState(
-      newTabState.hopEntries[pingSample.ttl],
-      pingSample
-    );
+    newTabState.hopEntries = {
+      ...newTabState.hopEntries,
+      [pingSample.ttl]: updateHopEntryState(
+        newTabState.hopEntries[pingSample.ttl] ?? {
+          peers: [],
+          rtts: {
+            current: 0,
+            min: Infinity,
+            median: 0,
+            max: -Infinity,
+            history: [],
+          },
+          stats: {
+            sent: 0,
+            replied: 0,
+            lost: 0,
+          },
+        },
+        pingSample
+      ),
+    };
   }
 
   return newTabState;
