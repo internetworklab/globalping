@@ -34,5 +34,5 @@ nsenter -t $pid2 -n ip a add fe80::2/64 dev v-host
 nsenter -t $pid2 -n ip r add ::/0 via fe80::1 dev v-host
 
 ip l set v-gping up
-ip route add $DN42_IPV6/128 via fe80::2 dev v-gping
+ip route add $DN42_IPV6/128 via fe80::2 dev v-gping src 2a0a:4cc0:0:2573:48bc:85ff:fe51:e967
 sysctl -w net.ipv6.conf.v-gping.forwarding=1
