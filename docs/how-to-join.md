@@ -1,4 +1,4 @@
-# How to Join A New Agent to the Cluster
+# Joining a New Agent to the Cluster
 
 TL;DR: If you are in a hurry, feel free to skip the bullshits and go straight to section 3. [How to Setup And Connect](#how-to-setup-and-connect)
 
