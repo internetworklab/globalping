@@ -31,7 +31,6 @@ func NewCounterStore() *CounterStore {
 		Name: "globalping_started_at",
 		Help: "The time when the globalping system is started",
 	})
-	prometheus.MustRegister(cs.StartedTime)
 
 	var commonLabels []string = []string{
 		PromLabelFrom, PromLabelTarget, PromLabelClient,
@@ -44,7 +43,6 @@ func NewCounterStore() *CounterStore {
 		},
 		commonLabels,
 	)
-	prometheus.MustRegister(cs.ServedDurationMs)
 
 	cs.NumRequestsServed = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -53,7 +51,6 @@ func NewCounterStore() *CounterStore {
 		},
 		commonLabels,
 	)
-	prometheus.MustRegister(cs.NumRequestsServed)
 
 	cs.NumPktsSent = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -62,7 +59,6 @@ func NewCounterStore() *CounterStore {
 		},
 		commonLabels,
 	)
-	prometheus.MustRegister(cs.NumPktsSent)
 
 	cs.NumPktsReceived = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -71,7 +67,6 @@ func NewCounterStore() *CounterStore {
 		},
 		commonLabels,
 	)
-	prometheus.MustRegister(cs.NumPktsReceived)
 
 	cs.NumBytesSent = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -80,7 +75,6 @@ func NewCounterStore() *CounterStore {
 		},
 		commonLabels,
 	)
-	prometheus.MustRegister(cs.NumBytesSent)
 
 	cs.NumBytesReceived = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -89,7 +83,6 @@ func NewCounterStore() *CounterStore {
 		},
 		commonLabels,
 	)
-	prometheus.MustRegister(cs.NumBytesReceived)
 
 	return cs
 }
