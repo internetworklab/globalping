@@ -29,10 +29,23 @@ const fakeSources = [
   "192.168.1.7",
 ];
 
+function getNextId(onGoingTasks: PendingTask[]): number {
+  let maxId = 0;
+  if (onGoingTasks.length > 0) {
+    for (const task of onGoingTasks) {
+      if (task.taskId > maxId) {
+        maxId = task.taskId;
+      }
+    }
+    maxId = maxId + 1;
+  }
+  return maxId;
+}
+
 function getSortedOnGoingTasks(onGoingTasks: PendingTask[]): PendingTask[] {
   const sortedTasks = [...onGoingTasks];
   sortedTasks.sort((a, b) => {
-    return b.taskId.localeCompare(a.taskId);
+    return b.taskId - a.taskId;
   });
   return sortedTasks;
 }
@@ -46,7 +59,7 @@ export default function Home() {
     return {
       sources: [],
       targets: [],
-      taskId: "",
+      taskId: 0,
       type: "ping",
     };
   });
@@ -118,10 +131,11 @@ export default function Home() {
                   const tgts = dedup(targetsInput.split(","))
                     .map((t) => t.trim())
                     .filter((t) => t.length > 0);
+
                   setPendingTask({
                     sources: srcs,
                     targets: tgts,
-                    taskId: onGoingTasks.length.toString(),
+                    taskId: getNextId(onGoingTasks),
                     type: taskType,
                   });
                   setOpenTaskConfirmDialog(true);

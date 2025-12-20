@@ -15,7 +15,7 @@ import CloseIcon from "@mui/icons-material/CloseOutlined";
 
 export function TaskCloseIconButton(props: {
   onConfirmedClosed: () => void;
-  taskId: string;
+  taskId: number;
 }) {
   const { onConfirmedClosed, taskId } = props;
   const [showDialog, setShowDialog] = useState<boolean>(false);

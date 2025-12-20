@@ -130,10 +130,15 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 			derivedPingRequest.Destination = target
 			derivedPingRequest.From = []string{from}
 
+			extraRequestHeader := make(map[string]string)
+			extraRequestHeader["X-Forwarded-For"] = pkgutils.GetRemoteAddr(r)
+			extraRequestHeader["X-Real-IP"] = pkgutils.GetRemoteAddr(r)
+
 			var remotePinger pkgpinger.Pinger = &pkgpinger.SimpleRemotePinger{
 				Endpoint:        *remotePingerEndpoint,
 				Request:         *derivedPingRequest,
 				ClientTLSConfig: handler.ClientTLSConfig,
+				ExtraRequestHeader: extraRequestHeader,
 			}
 			remotePinger = WithMetadata(remotePinger, map[string]string{
 				pkgpinger.MetadataKeyFrom:   from,

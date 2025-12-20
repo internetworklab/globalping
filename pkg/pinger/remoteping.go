@@ -14,6 +14,7 @@ type SimpleRemotePinger struct {
 	Endpoint        string
 	Request         SimplePingRequest
 	ClientTLSConfig *tls.Config
+	ExtraRequestHeader map[string]string
 }
 
 func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
@@ -41,6 +42,13 @@ func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
 			evChan <- PingEvent{Error: err}
 			return
 		}
+
+		if sp.ExtraRequestHeader != nil {
+			for k, v := range sp.ExtraRequestHeader {
+				req.Header.Set(k, v)
+			}
+		}
+
 		resp, err := client.Do(req)
 		if err != nil {
 			evChan <- PingEvent{Error: err}

@@ -3,14 +3,16 @@ package utils
 import "net/http"
 
 func GetRemoteAddr(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
+	headersToTry := []string{
+		"X-Forwarded-For",
+		"x-forwarded-for",
+		"X-Real-IP",
+		"x-real-ip",
 	}
-	if xff := r.Header.Get("x-forwarded-for"); xff != "" {
-		return xff
-	}
-	if xri := r.Header.Get("x-real-ip"); xri != "" {
-		return xri
+	for _, headerKey := range headersToTry {
+		if value := r.Header.Get(headerKey); value != "" {
+			return value
+		}
 	}
 	return r.RemoteAddr
 }
