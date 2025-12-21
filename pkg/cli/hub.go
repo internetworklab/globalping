@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkghandler "example.com/rbmq-demo/pkg/handler"
 	pkgsafemap "example.com/rbmq-demo/pkg/safemap"
+	pkgutils "example.com/rbmq-demo/pkg/utils"
 	"github.com/gorilla/websocket"
 )
 
@@ -36,17 +38,11 @@ type HubCmd struct {
 
 func (hubCmd HubCmd) Run() error {
 
-	var customCAs *x509.CertPool = nil
-	if hubCmd.PeerCAs != nil {
-		customCAs = x509.NewCertPool()
-		for _, ca := range hubCmd.PeerCAs {
-			log.Printf("Appending CA file to the trust list: %s", ca)
-			caData, err := os.ReadFile(ca)
-			if err != nil {
-				log.Fatalf("Failed to read CA file %s: %v", ca, err)
-			}
-			customCAs.AppendCertsFromPEM(caData)
-		}
+	customCAs, err := pkgutils.NewCustomCAPool(hubCmd.PeerCAs)
+	if err != nil {
+		log.Fatalf("Failed to create custom CA pool: %v", err)
+	} else if len(hubCmd.PeerCAs) > 0 {
+		log.Printf("Appended custom CAs: %s", strings.Join(hubCmd.PeerCAs, ", "))
 	}
 
 	sigs := make(chan os.Signal, 1)

@@ -1,5 +1,10 @@
 {
-    "CN": "ca",
+    "CN": $cname,
+    "hosts": $hosts,
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
     "names": [
         {
             "C": "US",

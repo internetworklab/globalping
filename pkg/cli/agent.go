@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"log"
@@ -140,7 +139,10 @@ func (agentCmd *AgentCmd) Run() error {
 	if token := os.Getenv("IPINFO_TOKEN"); token != "" {
 		ipinfoToken = &token
 	}
-	classicIPInfoAdapter := pkgipinfo.NewIPInfoAdapter(ipinfoToken)
+	classicIPInfoAdapter, err := pkgipinfo.NewIPInfoAdapter(ipinfoToken)
+	if err != nil {
+		log.Fatalf("failed to initialize IPInfo adapter: %v", err)
+	}
 	ipinfoReg.RegisterAdapter(classicIPInfoAdapter)
 	dn42IPInfoAdapter := pkgipinfo.NewDN42IPInfoAdapter(agentCmd.DN42IPInfoProvider)
 	ipinfoReg.RegisterAdapter(dn42IPInfoAdapter)
@@ -150,17 +152,11 @@ func (agentCmd *AgentCmd) Run() error {
 	autoIPInfoDispatcher.SetUpDefaultRoutes(dn42IPInfoAdapter, classicIPInfoAdapter)
 	ipinfoReg.RegisterAdapter(autoIPInfoDispatcher)
 
-	var customCAs *x509.CertPool = nil
-	if agentCmd.PeerCAs != nil {
-		customCAs = x509.NewCertPool()
-		for _, ca := range agentCmd.PeerCAs {
-			log.Printf("Appending CA file to the trust list: %s", ca)
-			caData, err := os.ReadFile(ca)
-			if err != nil {
-				log.Fatalf("failed to read CA file %s: %v", ca, err)
-			}
-			customCAs.AppendCertsFromPEM(caData)
-		}
+	customCAs, err := pkgutils.NewCustomCAPool(agentCmd.PeerCAs)
+	if err != nil {
+		log.Fatalf("Failed to create custom CA pool: %v", err)
+	} else if len(agentCmd.PeerCAs) > 0 {
+		log.Printf("Appended custom CAs: %s", strings.Join(agentCmd.PeerCAs, ", "))
 	}
 
 	if agentCmd.SharedQuota < 1 {
