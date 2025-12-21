@@ -30,6 +30,8 @@ make install
 
 Also make sure your node already have jq and golang (both of newer version) installed and $GOPATH/bin is in the $PATH.
 
+You node would require both the Internet ('Clearnet') and DN42 connectivity.
+
 Now assume that you already recursive clone our repo, and cd into the project root.
 
 1. Pick your nickname, a valid nickname is a valid dns label, satisfies regex `[a-zA-Z-_.\d]+`, for example, `json` is a valid nickname, create a directory in `confed/`, and populate the template contents:
@@ -65,6 +67,10 @@ jq -n -f ./manifests/peer.json.template \
 # generate the cert pair
 ./gen-cert-pair.sh ./manifests/$nodename.json
 ```
+
+Note: the hosts list is critical, say in step3, the public https endpoint of your agent is `https://<domainx>:<port>`, then `<domainx>` must be included in the hosts list above.
+
+For example, if the public https endpoint of your nyc1 agent is `https://nyc1.yourdomain.com:18081` (port doesn't matter), then you should make sure that, the domain `nyc1.yourdomain.com` is actually included in the generated cert, you can view this by running `openssl x509 -in path/to/cert.pem -noout -text` . And of course, the domain also have to resolved to the IP and IPv6 address of your node where the agent is deployed.
 
 Now you should have your agent's cert pair as `$nodename.pem` and `$nodename-key.pem` in your confed directory.
 
