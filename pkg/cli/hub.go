@@ -22,7 +22,7 @@ import (
 var upgrader = websocket.Upgrader{}
 
 type HubCmd struct {
-	PeerCAs       []string `help:"A list of path to the CAs use to verify peer certificates, can be specified multiple times" type:"path"`
+	PeerCAs       []string `help:"A list of path to the CAs use to verify peer certificates, can be specified multiple times"`
 	Address       string   `help:"The address to listen on for private operations" default:":8080"`
 	AddressPublic string   `help:"The address to listen on for public operations" default:":8082"`
 	WebSocketPath string   `help:"The path to the WebSocket endpoint" default:"/ws"`
