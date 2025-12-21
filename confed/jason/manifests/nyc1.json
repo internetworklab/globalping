@@ -1,0 +1,19 @@
+{
+  "CN": "jason",
+  "hosts": [
+    "nyc1.jason.example.com"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "San Francisco",
+      "O": "Internet Widgets, Inc.",
+      "OU": "WWW",
+      "ST": "California"
+    }
+  ]
+}
