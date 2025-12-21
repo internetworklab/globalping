@@ -42,6 +42,10 @@ cd confed
 
 Now that you have your custom CA cert pairs in `confed/$nickname/ca.pem` and `confed/$nickname/ca-key.pem`, but don't worry, neither ca-key.pem or ca.csr will be submitted to the repo.
 
+Once your CA cert is created, you can just start to submit the changes to the repo [internetworklab/globalping](https://github.com/internetworklab/globalping): Create your own fork, commit and push the changes to your fork repo, open an new PullRequest and wait. You don't have to be hurry to do the next steps before the PR is merged, as the hub needs to know your CA cert before it can validate your agent's requests.
+
+After the PR is merged, start the following steps:
+
 2. Create cert pair for your agent:
 
 Cd into your confed directory, populate the peer's cert manifest, and invoke the gen-cert-pair.sh script to obtain a new pair of certs:
