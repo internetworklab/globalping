@@ -118,6 +118,8 @@ bin/globalping agent \
   --tls-listen-address=:18081
 ```
 
+Note: When choosing the node name ($nodename), we suggest that, use some format like `<your-nickname>/<location><number>` or `<your-nickname>/<country-or-region>-<location>-<number>`, for example, `jason/nyc1`, `jason/us-nyc-01` are both good node name for an agent deployed at somewhere near NYC.
+
 To recap, mainly three steps are involved:
 
 1. Build your custom CA and submit it to the repo;
