@@ -20,6 +20,13 @@ This is because every agent, when starting, will proactively send its informatio
 
 ## How to Setup and Connect
 
+Make sure golang of newer version is installed in your system:
+
+```shell
+curl -L -o - https://go.dev/dl/go1.25.5.linux-amd64.tar.gz | tar -C /usr/local -z -x -v -f -
+# append /usr/local/go/bin to $PATH
+```
+
 The following procedures require your node have cfssl binaries installed, if they are not installed yet, please install them by
 
 ```shell
