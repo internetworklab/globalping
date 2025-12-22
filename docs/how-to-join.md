@@ -125,8 +125,17 @@ bin/globalping agent \
   --tls-listen-address=:18081 \
   --respond-range 172.20.0.0/14 \
   --respond-range fd00::/8 \
-  --respond-range 10.127.0.0/16
+  --respond-range 10.127.0.0/16 \
+  --metrics-listen-address="127.0.0.1:2112"
 ```
+
+By default, the agent use default public endpoint ":2112" to expose prometheus metrics, if you don't like it to be public, just change it to
+
+```
+--metrics-listen-address="127.0.0.1:2112"
+```
+
+You can curl `127.0.0.1:2112/metrics` to see what prometheus metrics it published.
 
 Note: When choosing the node name ($nodename), we suggest that, use some format like `<your-nickname>/<location><number>` or `<your-nickname>/<country-or-region>-<location>-<number>`, for example, `jason/nyc1`, `jason/us-nyc-01` are both good node name for an agent deployed at somewhere near NYC.
 
