@@ -207,8 +207,7 @@ func (agentCmd *AgentCmd) Run() error {
 	for _, rangeStr := range agentCmd.RespondRange {
 		_, nw, err := net.ParseCIDR(rangeStr)
 		if err != nil {
-			log.Printf("failed to parse respond range %s: %v", rangeStr, err)
-			continue
+			log.Fatalf("failed to parse respond range %s: %v", rangeStr, err)
 		}
 		respondRangeNet = append(respondRangeNet, *nw)
 	}
