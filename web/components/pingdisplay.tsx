@@ -179,23 +179,34 @@ export function PingResultDisplay(props: {
   );
 }
 
-function RenderLegend(props:{
-  color: CSSProperties["color"];
-  label: string;
-}) {
+function RenderLegend(props: { color: CSSProperties["color"]; label: string }) {
   const { color, label } = props;
-  return <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-    <Box sx={{ width: 10, height: 10, backgroundColor: color, borderRadius: "8px" }} />
-    <Typography variant="body2">{label}</Typography>
-  </Box>
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+      <Box
+        sx={{
+          width: 10,
+          height: 10,
+          backgroundColor: color,
+          borderRadius: "8px",
+        }}
+      />
+      <Typography variant="body2">{label}</Typography>
+    </Box>
+  );
 }
 
-function RenderLegends(props:{}) {
-  return <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-    <RenderLegend color="green" label="0-40ms" />
-    <RenderLegend color="yellow" label="40-150ms" />
-    <RenderLegend color="red" label="150ms+" />
-  </Box>
+function RenderLegends(props: {}) {
+  return (
+    <Box sx={{ paddingTop: 2, paddingRight: 2, flexShrink: 0 }}>
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        <RenderLegend color="green" label="0-40ms" />
+        <RenderLegend color="yellow" label="40-150ms" />
+        <RenderLegend color="red" label="150ms+" />
+        <RenderLegend color="grey" label="No Data" />
+      </Box>
+    </Box>
+  );
 }
 
 function RowMap(props: {
@@ -257,20 +268,23 @@ function RowMap(props: {
             <Box
               sx={{
                 display: "flex",
-                alignItems: "center",
-                height: "500px",
+                height: "400px",
                 flexDirection: "row",
+                gap: 2,
               }}
             >
               <WorldMap
                 canvasX={canvasX}
                 canvasY={canvasY}
                 fill="lightblue"
+                viewBox={`${canvasX * 0.1} ${canvasY * 0.1} 360000 ${
+                  canvasY * 0.6
+                }`}
                 markers={[
                   {
                     lonLat: [-118.2437, 34.0522],
                     fill: "green",
-                    radius: 3000,
+                    radius: 2400,
                     strokeWidth: 1000,
                     stroke: "white",
                   },

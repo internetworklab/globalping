@@ -165,8 +165,9 @@ export function WorldMap(props: {
   canvasY: number;
   fill: CSSProperties["fill"];
   markers: Marker[];
+  viewBox?: string;
 }) {
-  const { canvasX, canvasY, fill, markers } = props;
+  const { canvasX, canvasY, fill, markers, viewBox } = props;
   const flatShapes = useMemo(() => {
     const worldMap = worldMapAny as FeatureCollection;
     const flatShapes = toFlatShape(worldMap.features);
@@ -183,7 +184,7 @@ export function WorldMap(props: {
     <Fragment>
       <Box sx={{ height: "100%" }}>
         <svg
-          viewBox={`0 0 ${canvasX} ${canvasY}`}
+          viewBox={viewBox || `0 0 ${canvasX} ${canvasY}`}
           width="100%"
           height="100%"
           style={{ overflow: "hidden" }}
