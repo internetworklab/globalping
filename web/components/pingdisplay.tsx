@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import {
   Box,
   Typography,
@@ -15,13 +16,25 @@ import {
   Card,
 } from "@mui/material";
 import { CSSProperties, Fragment, useEffect, useRef, useState } from "react";
-import { PingSample, generatePingSampleStream } from "@/apis/globalping";
+import {
+  PingSample,
+  generatePingSampleStream,
+  getNodes,
+  Conns,
+  ConnEntry,
+} from "@/apis/globalping";
 import { PendingTask } from "@/apis/types";
 import { TaskCloseIconButton } from "@/components/taskclose";
-import { getLatencyColor } from "./colorfunc";
+import {
+  ColorEncoding,
+  getLatencyColor,
+  encodings,
+  latencyColorEncodingToString,
+  colorGrey,
+} from "./colorfunc";
 import { PlayPauseButton } from "./playpause";
 import MapIcon from "@mui/icons-material/Map";
-import { WorldMap } from "./worldmap";
+import { Marker, WorldMap } from "./worldmap";
 
 type RowObject = {
   target: string;
@@ -196,17 +209,87 @@ function RenderLegend(props: { color: CSSProperties["color"]; label: string }) {
   );
 }
 
-function RenderLegends(props: {}) {
+function RenderLegends(props: { encodings: ColorEncoding[] }) {
+  const { encodings } = props;
   return (
     <Box sx={{ paddingTop: 2, paddingRight: 2, flexShrink: 0 }}>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <RenderLegend color="green" label="0-40ms" />
-        <RenderLegend color="yellow" label="40-150ms" />
-        <RenderLegend color="red" label="150ms+" />
-        <RenderLegend color="grey" label="No Data" />
+        {encodings.map((encoding) => (
+          <RenderLegend
+            key={encoding.range[0]}
+            color={encoding.color}
+            label={latencyColorEncodingToString(encoding)}
+          />
+        ))}
+        <RenderLegend color={colorGrey} label="No Data" />
       </Box>
     </Box>
   );
+}
+
+type NodeGroup = {
+  nodes: ConnEntry[];
+  groupName: string;
+  latLon: [number, number];
+};
+
+function getNodeLatLon(conn: ConnEntry): [number, number] | undefined {
+  const locString = conn.attributes?.["ExactLocation"];
+  if (locString === undefined || locString === null || locString === "") {
+    return undefined;
+  }
+  const locs = locString.split(",");
+  if (locs.length !== 2) {
+    return undefined;
+  }
+  const lat = parseFloat(locs[0]);
+  const lon = parseFloat(locs[1]);
+
+  if (isNaN(lat) || isNaN(lon)) {
+    return undefined;
+  }
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return undefined;
+  }
+  return [lat, lon];
+}
+
+function getGridIndex(latLon: [number, number]): [number, number] {
+  const lat = latLon[0];
+  const lon = latLon[1];
+  const latIndex = Math.floor(lat / 12);
+  const lonIndex = Math.floor(lon / 12);
+  return [latIndex, lonIndex];
+}
+
+function getGridKey(latLon: [number, number]): string {
+  const [latIndex, lonIndex] = getGridIndex(latLon);
+  return `${latIndex},${lonIndex}`;
+}
+
+function getNodeGroups(conns: Conns): NodeGroup[] {
+  const groups: Record<string, NodeGroup> = {};
+  for (const connKey in conns) {
+    const connEntry = conns[connKey];
+    const latLon = getNodeLatLon(connEntry);
+    if (latLon === undefined) {
+      continue;
+    }
+    const gridKey = getGridKey(latLon);
+    if (groups[gridKey] === undefined) {
+      groups[gridKey] = {
+        nodes: [],
+        groupName: gridKey,
+        latLon: latLon,
+      };
+    }
+    groups[gridKey].nodes.push(connEntry);
+  }
+  return Array.from(Object.values(groups));
+}
+
+function latLonToLonLat(latLon: [number, number]): [number, number] {
+  return [latLon[1], latLon[0]];
 }
 
 function RowMap(props: {
@@ -226,6 +309,54 @@ function RowMap(props: {
 
   const canvasX = 360000;
   const canvasY = 200000;
+
+  const { data: conns } = useQuery({
+    queryKey: ["nodes"],
+    queryFn: () => getNodes(),
+  });
+
+  let nodeGroups: NodeGroup[] = [];
+  if (conns !== undefined && conns !== null) {
+    nodeGroups = getNodeGroups(conns);
+  }
+
+  let markers: Marker[] = [];
+  for (const nodeGroup of nodeGroups) {
+    const latencies: number[] = [];
+    for (const node of nodeGroup.nodes) {
+      if (
+        node.node_name === undefined ||
+        node.node_name === null ||
+        node.node_name === ""
+      ) {
+        continue;
+      }
+      const latency = getLatency(node.node_name, target);
+      if (
+        latency !== undefined &&
+        latency !== null &&
+        latency !== Infinity &&
+        !isNaN(latency) &&
+        Number.isFinite(latency) &&
+        latency >= 0
+      ) {
+        latencies.push(latency);
+      }
+    }
+    latencies.sort((a, b) => a - b);
+    let color: CSSProperties["color"] = colorGrey;
+    if (latencies.length > 0) {
+      color = getLatencyColor(latencies[0]);
+    }
+
+    markers.push({
+      lonLat: latLonToLonLat(nodeGroup.latLon),
+      fill: color,
+      radius: 2000,
+      strokeWidth: 800,
+      stroke: "white",
+    });
+  }
 
   return (
     <Fragment>
@@ -280,17 +411,9 @@ function RowMap(props: {
                 viewBox={`${canvasX * 0.1} ${canvasY * 0.1} 360000 ${
                   canvasY * 0.6
                 }`}
-                markers={[
-                  {
-                    lonLat: [-118.2437, 34.0522],
-                    fill: "green",
-                    radius: 2400,
-                    strokeWidth: 1000,
-                    stroke: "white",
-                  },
-                ]}
+                markers={markers}
               />
-              <RenderLegends />
+              <RenderLegends encodings={encodings} />
             </Box>
           </TableCell>
         </TableRow>

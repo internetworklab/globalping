@@ -398,3 +398,23 @@ export function generatePingSampleStream(
     },
   });
 }
+
+export type ConnEntry = {
+  connected_at?: number;
+  last_heartbeat?: number;
+  node_name?: string;
+  registered_at?: number;
+  attributes?: {
+    [key: string]: string;
+  };
+};
+
+export type Conns = {
+  [key: string]: ConnEntry;
+};
+
+export async function getNodes(): Promise<Conns> {
+  return fetch(`${getApiEndpoint()}/conns`).then(
+    (res) => res.json() as Promise<Conns>
+  );
+}
