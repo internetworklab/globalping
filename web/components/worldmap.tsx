@@ -10,9 +10,15 @@ type LonLat = number[];
 type Polygon = LonLat[];
 
 type Geometry = {
-    type: "Polygon" | "MultiPolygon";
-    coordinates: Polygon | Polygon[][] | Polygon[][][] | Polygon[][][][][];
-}
+  type: "Polygon" | "MultiPolygon";
+
+  coordinates:
+    | Polygon
+    | Polygon[]
+    | Polygon[][]
+    | Polygon[][][]
+    | Polygon[][][][][];
+};
 
 type Feature = {
   type: "Feature";
@@ -23,6 +29,12 @@ type Feature = {
 type FeatureCollection = {
   type: "FeatureCollection";
   features: Feature[];
+};
+
+type FlatShape = {
+  groupId: number;
+  feature: Feature;
+  polygon: Polygon;
 };
 
 function isPolygon(polygon: any): boolean {
@@ -50,33 +62,35 @@ function* yieldPolygons(
     yield polygonOrPolygons as Polygon;
   } else if (Array.isArray(polygonOrPolygons)) {
     for (const polygonany of polygonOrPolygons) {
-      for (const polygonx of yieldPolygons(polygonany)) {
-        yield polygonx;
-      }
+      yield* yieldPolygons(polygonany);
     }
   }
+}
+
+function toFlatShape(features: Feature[]): FlatShape[] {
+  const flatShapes: FlatShape[] = [];
+  let groupId = 0;
+  for (const feature of features) {
+    if (feature.geometry?.coordinates) {
+      for (const polygon of yieldPolygons(feature.geometry.coordinates)) {
+        flatShapes.push({
+          groupId,
+          feature,
+          polygon,
+        });
+      }
+    }
+    groupId++;
+  }
+  return flatShapes;
 }
 
 export function WorldMap() {
   useEffect(() => {
     const worldMap = worldMapAny as FeatureCollection;
-    let fuck = 0;
-    for (const feature of worldMap.features) {
-      const geometry = feature.geometry;
-      const name = feature.properties?.name;
-      if (name === undefined || name === null || name === "") {
-        continue;
-      }
-      for (const polygon of yieldPolygons(geometry.coordinates)) {
-        const ispol = isPolygon(polygon);
-        console.log("[dbg] country", name, "polygon", ispol);
-        if (!ispol) {
-          fuck++;
-        }
-      }
-    }
-    console.log("[dbg fuck", fuck);
-  });
+    const flatShapes = toFlatShape(worldMap.features);
+    console.log("[dbg] flatShapes", flatShapes);
+  }, []);
   return (
     <Fragment>
       <Box sx={{ height: "100%" }}>Test Content</Box>
