@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -38,9 +39,29 @@ type HubCmd struct {
 
 	ResolverAddress         string `help:"The address of the resolver to use for DNS resolution" default:"172.20.0.53:53"`
 	OutOfRespondRangePolicy string `help:"The policy to apply when a target is out of the respond range of a node" enum:"allow,deny" default:"allow"`
+
+	MinPktInterval string `help:"The minimum interval between packets"`
+	MaxPktTimeout  string `help:"The maximum timeout for a packet"`
 }
 
 func (hubCmd HubCmd) Run() error {
+	var minPktInterval *time.Duration
+	var maxPktTimeout *time.Duration
+
+	if hubCmd.MinPktInterval != "" {
+		intv, err := time.ParseDuration(hubCmd.MinPktInterval)
+		if err != nil {
+			return fmt.Errorf("failed to parse min packet interval: %v", err)
+		}
+		minPktInterval = &intv
+	}
+	if hubCmd.MaxPktTimeout != "" {
+		tmt, err := time.ParseDuration(hubCmd.MaxPktTimeout)
+		if err != nil {
+			return fmt.Errorf("failed to parse max packet timeout: %v", err)
+		}
+		maxPktTimeout = &tmt
+	}
 
 	customCAs, err := pkgutils.NewCustomCAPool(hubCmd.PeerCAs)
 	if err != nil {
@@ -78,6 +99,8 @@ func (hubCmd HubCmd) Run() error {
 		ClientTLSConfig:         clientTLSConfig,
 		Resolver:                resolver,
 		OutOfRespondRangePolicy: pkghandler.OutOfRespondRangePolicy(hubCmd.OutOfRespondRangePolicy),
+		MinPktInterval:          minPktInterval,
+		MaxPktTimeout:           maxPktTimeout,
 	}
 
 	// muxerPrivate is for privileged rw operations

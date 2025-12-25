@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
@@ -29,6 +30,8 @@ type PingTaskHandler struct {
 	ClientTLSConfig         *tls.Config
 	Resolver                *net.Resolver
 	OutOfRespondRangePolicy OutOfRespondRangePolicy
+	MinPktInterval          *time.Duration
+	MaxPktTimeout           *time.Duration
 }
 
 const (
@@ -146,6 +149,32 @@ func WithMetadata(pinger pkgpinger.Pinger, metadata map[string]string) pkgpinger
 	}
 }
 
+func getRealPktTimeout(req *http.Request, pingReq *pkgpinger.SimplePingRequest, maxPktTimeout *time.Duration) time.Duration {
+	if maxPktTimeout == nil {
+		return time.Duration(pingReq.PktTimeoutMilliseconds) * time.Millisecond
+	}
+
+	pktTimeoutMs := int64(pingReq.PktTimeoutMilliseconds)
+	if pktTimeoutMs > maxPktTimeout.Milliseconds() {
+		log.Printf("Request from %s has a too big pkt timeout %dms, clamping to %dms", pkgutils.GetRemoteAddr(req), pktTimeoutMs, maxPktTimeout.Milliseconds())
+		pktTimeoutMs = maxPktTimeout.Milliseconds()
+	}
+	return time.Duration(pktTimeoutMs) * time.Millisecond
+}
+
+func getRealPktIntv(req *http.Request, pingReq *pkgpinger.SimplePingRequest, minPktInterval *time.Duration) time.Duration {
+	if minPktInterval == nil {
+		return time.Duration(pingReq.IntvMilliseconds) * time.Millisecond
+	}
+
+	intvMs := int64(pingReq.IntvMilliseconds)
+	if intvMs < minPktInterval.Milliseconds() {
+		log.Printf("Request from %s has a too small pkt interval %dms, clamping to %dms", pkgutils.GetRemoteAddr(req), intvMs, minPktInterval.Milliseconds())
+		intvMs = minPktInterval.Milliseconds()
+	}
+	return time.Duration(intvMs) * time.Millisecond
+}
+
 func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Set headers for streaming response
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -157,6 +186,9 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		json.NewEncoder(w).Encode(pkgutils.ErrorResponse{Error: err.Error()})
 		return
 	}
+
+	form.IntvMilliseconds = int(getRealPktIntv(r, form, handler.MinPktInterval).Milliseconds())
+	form.PktTimeoutMilliseconds = int(getRealPktTimeout(r, form, handler.MaxPktTimeout).Milliseconds())
 
 	pingers := make([]pkgpinger.Pinger, 0)
 	ctx := r.Context()
