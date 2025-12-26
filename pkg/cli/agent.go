@@ -108,7 +108,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		counterStore.ServedDurationMs.With(commonLabels).Add(float64(servedDurationMs))
 	}()
 
-	if len(ph.DomainRespondRange) > 0 {
+	if len(ph.DomainRespondRange) > 0 && net.ParseIP(pingRequest.Destination) == nil {
 		hit := false
 		for _, domainPattern := range ph.DomainRespondRange {
 			if domainPattern.MatchString(pingRequest.Destination) {
