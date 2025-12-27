@@ -1,6 +1,13 @@
 "use client";
 
-import { CSSProperties, Fragment, useEffect, useMemo, useState } from "react";
+import {
+  CSSProperties,
+  Fragment,
+  RefObject,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import worldMapAny from "./worldmap.json";
 import { Box, Tooltip } from "@mui/material";
 
@@ -174,13 +181,21 @@ function RenderMarker(props: { marker: Marker; projector: Projector }) {
 }
 
 export function WorldMap(props: {
-  canvasX: number;
-  canvasY: number;
+  canvasWidth: number;
+  canvasHeight: number;
   fill: CSSProperties["fill"];
   markers: Marker[];
   viewBox?: string;
+  canvasSvgRef?: RefObject<SVGSVGElement>;
 }) {
-  const { canvasX, canvasY, fill, markers, viewBox } = props;
+  const {
+    canvasWidth: canvasX,
+    canvasHeight: canvasY,
+    fill,
+    markers,
+    viewBox,
+    canvasSvgRef,
+  } = props;
   const flatShapes = useMemo(() => {
     const worldMap = worldMapAny as FeatureCollection;
     const flatShapes = toFlatShape(worldMap.features);
@@ -197,7 +212,8 @@ export function WorldMap(props: {
     <Fragment>
       <Box sx={{ height: "100%" }}>
         <svg
-          viewBox={viewBox || `0 0 ${canvasX} ${canvasY}`}
+          ref={canvasSvgRef}
+          viewBox={viewBox}
           width="100%"
           height="100%"
           style={{ overflow: "hidden" }}

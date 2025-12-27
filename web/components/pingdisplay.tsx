@@ -417,8 +417,8 @@ function RowMap(props: {
               }}
             >
               <WorldMap
-                canvasX={canvasX}
-                canvasY={canvasY}
+                canvasWidth={canvasX}
+                canvasHeight={canvasY}
                 fill="lightblue"
                 viewBox={`${canvasX * 0.1} ${canvasY * 0.1} 360000 ${
                   canvasY * 0.6

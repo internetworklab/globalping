@@ -12,9 +12,12 @@ import {
   Tab,
   Tabs,
   Card,
+  Tooltip,
+  IconButton,
 } from "@mui/material";
 import {
   Fragment,
+  RefObject,
   useEffect,
   useMemo,
   useReducer,
@@ -28,6 +31,8 @@ import { IPDisp } from "./ipdisp";
 import { generatePingSampleStream, PingSample } from "@/apis/globalping";
 import { PendingTask } from "@/apis/types";
 import { demoPingSamples } from "@/apis/mock/mocktraceroute";
+import { WorldMap } from "./worldmap";
+import MapIcon from "@mui/icons-material/Map";
 
 type TracerouteIPEntry = {
   ip: string;
@@ -334,6 +339,33 @@ export function TracerouteResultDisplay(props: {
     };
   }, [task.taskId, stopped, paused]);
 
+  const canvasW = 360000;
+  const canvasH = 200000;
+
+  const canvasSvgRef = useRef<SVGSVGElement>(null);
+  useEffect(() => {
+    if (canvasSvgRef.current) {
+      const svg = canvasSvgRef.current;
+      const parent = svg.parentElement;
+      if (parent) {
+        const parentRect = parent.getBoundingClientRect();
+        console.log("[dbg] parentRect", parentRect);
+        const realRatio = Math.max(0.3, parentRect.height / parentRect.width);
+        const croppedCanvasY = canvasW * realRatio;
+        const offsetX = 0;
+        const offsetY = Math.max(0, (0.7 * (canvasH - croppedCanvasY)) / 2);
+        const projXLen = canvasW;
+        const projYLen = croppedCanvasY;
+
+        svg.setAttribute(
+          "viewBox",
+          `${offsetX} ${offsetY} ${projXLen} ${projYLen}`
+        );
+      }
+    }
+  });
+  const [showMap, setShowMap] = useState<boolean>(false);
+
   return (
     <Card>
       <Box
@@ -374,10 +406,37 @@ export function TracerouteResultDisplay(props: {
           />
         </Box>
       </Box>
-
-      {task.targets.length > 0 && task.targets[0] && (
-        <Box sx={{ padding: 2 }}>Traceroute to {task.targets[0]}</Box>
+      {showMap && (
+        <Box sx={{ height: "360px" }}>
+          <WorldMap
+            canvasSvgRef={canvasSvgRef as any}
+            canvasWidth={canvasW}
+            canvasHeight={canvasH}
+            fill="lightblue"
+            markers={[]}
+          />
+        </Box>
       )}
+      <Box
+        sx={{
+          padding: 2,
+          display: "flex",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: 2,
+        }}
+      >
+        <Box>
+          {task.targets.length > 0 && task.targets[0] && (
+            <Box>Traceroute to {task.targets[0]}</Box>
+          )}
+        </Box>
+        <Tooltip title={showMap ? "Hide Map" : "Show Map"}>
+          <IconButton onClick={() => setShowMap(!showMap)}>
+            <MapIcon />
+          </IconButton>
+        </Tooltip>
+      </Box>
       <TableContainer sx={{ maxWidth: "100%", overflowX: "auto" }}>
         <Table>
           <TableHead>
