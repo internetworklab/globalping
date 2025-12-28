@@ -155,6 +155,18 @@ export type Marker = {
   index?: string;
 };
 
+function setViewBox(svg: SVGSVGElement, viewBox: number[]): void {
+  svg.setAttribute("viewBox", viewBox.join(" "));
+}
+
+function getViewBox(svg: SVGSVGElement): number[] {
+  const viewBox = svg.getAttribute("viewBox");
+  if (viewBox) {
+    return viewBox.split(" ").map(Number);
+  }
+  return [0, 0, 0, 0];
+}
+
 export function useCanvasSizing(canvasW: number, canvasH: number) {
   const canvasSvgRef = useRef<SVGSVGElement>(null);
   useEffect(() => {
@@ -171,13 +183,59 @@ export function useCanvasSizing(canvasW: number, canvasH: number) {
         const projXLen = canvasW;
         const projYLen = croppedCanvasY;
 
-        svg.setAttribute(
-          "viewBox",
-          `${offsetX} ${offsetY} ${projXLen} ${projYLen}`
-        );
+        setViewBox(svg, [offsetX, offsetY, projXLen, projYLen]);
       }
     }
-  });
+  }, [canvasW, canvasH, canvasSvgRef.current]);
+
+  useEffect(() => {
+    const svg = canvasSvgRef.current;
+
+    const onMouseDown = (event: MouseEvent) => {
+      console.log("[dbg] mouse down", event);
+      const x0 = event.clientX;
+      const y0 = event.clientY;
+      const [initOffsetX, initOffsetY, initProjXLen, initProjYLen] = getViewBox(
+        svg!
+      );
+      const boundingBox = svg!.getBoundingClientRect();
+      const onMouseMove = (event: MouseEvent) => {
+        const x1 = event.clientX;
+        const y1 = event.clientY;
+        const dx = x1 - x0;
+        const dy = y1 - y0;
+        setViewBox(svg!, [
+          initOffsetX - dx * (initProjXLen / boundingBox.width),
+          initOffsetY - dy * (initProjYLen / boundingBox.height),
+          initProjXLen,
+          initProjYLen,
+        ]);
+        console.log(
+          "[dbg] mouse move",
+          dx,
+          dy,
+          initOffsetX - dx,
+          initOffsetY - dy
+        );
+      };
+      window.addEventListener("mousemove", onMouseMove);
+      console.log("[dbg] added mouse move listener");
+      const onMouseUp = (event: MouseEvent) => {
+        window.removeEventListener("mousemove", onMouseMove);
+        console.log("[dbg] removed mouse move listener");
+        window.removeEventListener("mouseup", onMouseUp);
+        console.log("[dbg] removed mouse up listener");
+      };
+      window.addEventListener("mouseup", onMouseUp);
+    };
+    svg?.addEventListener("mousedown", onMouseDown);
+    console.log("[dbg] added mouse down listener");
+
+    return () => {
+      svg?.removeEventListener("mousedown", onMouseDown);
+      console.log("[dbg] removed mouse down listener");
+    };
+  }, [canvasSvgRef.current]);
   return { canvasSvgRef };
 }
 
@@ -207,6 +265,7 @@ function RenderMarker(props: { marker: Marker; projector: Projector }) {
       >
         <g>
           <circle
+            style={{ cursor: "default" }}
             strokeWidth={marker.strokeWidth}
             stroke={marker.stroke}
             cx={x}
@@ -220,6 +279,7 @@ function RenderMarker(props: { marker: Marker; projector: Projector }) {
               y={y + radius * 1.75}
               fontSize={radius * 2}
               fill="white"
+              style={{ cursor: "text" }}
             >
               {marker.index}
             </text>
@@ -266,7 +326,7 @@ export function WorldMap(props: {
           viewBox={viewBox}
           width="100%"
           height="100%"
-          style={{ overflow: "hidden" }}
+          style={{ overflow: "hidden", cursor: "grab" }}
         >
           <RenderPolygons
             shapes={flatShapes}
