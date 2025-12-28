@@ -15,7 +15,14 @@ import {
   Tooltip,
   Card,
 } from "@mui/material";
-import { CSSProperties, Fragment, useEffect, useRef, useState } from "react";
+import {
+  CSSProperties,
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   PingSample,
   generatePingSampleStream,
@@ -269,10 +276,15 @@ function getGridKey(latLon: [number, number]): string {
   return `${latIndex},${lonIndex}`;
 }
 
-function getNodeGroups(conns: Conns): NodeGroup[] {
+function getNodeGroups(conns: Conns, sourceSet: Set<string>): NodeGroup[] {
   const groups: Record<string, NodeGroup> = {};
   for (const connKey in conns) {
     const connEntry = conns[connKey];
+
+    if (connEntry.node_name && !sourceSet.has(connEntry.node_name)) {
+      continue;
+    }
+
     const latLon = getNodeLatLon(connEntry);
     if (latLon === undefined) {
       continue;
@@ -292,6 +304,10 @@ function getNodeGroups(conns: Conns): NodeGroup[] {
 
 function latLonToLonLat(latLon: [number, number]): [number, number] {
   return [latLon[1], latLon[0]];
+}
+
+function trimPrefix(fullNodeName: string): string {
+  return fullNodeName.replace(/^[a-zA-Z0-9._-]+\//, "");
 }
 
 function RowMap(props: {
@@ -319,9 +335,13 @@ function RowMap(props: {
     queryFn: () => getNodes(),
   });
 
+  const sourceSet = useMemo(() => {
+    return new Set(sources ?? []);
+  }, [sources]);
+
   let nodeGroups: NodeGroup[] = [];
   if (conns !== undefined && conns !== null) {
-    nodeGroups = getNodeGroups(conns);
+    nodeGroups = getNodeGroups(conns, sourceSet);
   }
 
   let markers: Marker[] = [];
@@ -365,7 +385,9 @@ function RowMap(props: {
       radius: 2000,
       strokeWidth: 800,
       stroke: "white",
-      index: nodeGroup.nodes?.[0]?.node_name,
+      index: nodeGroup.nodes?.[0]?.node_name
+        ? trimPrefix(nodeGroup.nodes?.[0]?.node_name)
+        : undefined,
     };
     if (tooltip !== "") {
       marker.tooltip = tooltip;
