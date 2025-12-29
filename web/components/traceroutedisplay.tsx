@@ -406,50 +406,52 @@ export function TracerouteResultDisplay(props: {
             canvasWidth={canvasW}
             canvasHeight={canvasH}
             fill="lightblue"
-            markers={[
-              {
-                lonLat: [120.585, 31.299],
-                fill: colorGreen,
-                radius: 2000,
-                strokeWidth: 800,
-                stroke: "white",
-                tooltip: (
-                  <Box>
-                    <Box>TTL:&nbsp;1</Box>
-                    <Box>shanghai.example.com</Box>
-                  </Box>
-                ),
-                index: "1",
-              },
-              {
-                lonLat: [114.177, 22.319],
-                fill: colorGreen,
-                radius: 2000,
-                strokeWidth: 800,
-                stroke: "white",
-                tooltip: (
-                  <Box>
-                    <Box>TTL:&nbsp;2</Box>
-                    <Box>hongkong.example.com</Box>
-                  </Box>
-                ),
-                index: "2",
-              },
-              {
-                lonLat: [-118.408, 33.942],
-                fill: colorYellow,
-                radius: 2000,
-                strokeWidth: 800,
-                stroke: "white",
-                tooltip: (
-                  <Box>
-                    <Box>TTL:&nbsp;3</Box>
-                    <Box>lax.example.com</Box>
-                  </Box>
-                ),
-                index: "3",
-              },
-            ]}
+            markers={
+              [
+                // {
+                //   lonLat: [120.585, 31.299],
+                //   fill: colorGreen,
+                //   radius: 2000,
+                //   strokeWidth: 800,
+                //   stroke: "white",
+                //   tooltip: (
+                //     <Box>
+                //       <Box>TTL:&nbsp;1</Box>
+                //       <Box>shanghai.example.com</Box>
+                //     </Box>
+                //   ),
+                //   index: "1",
+                // },
+                // {
+                //   lonLat: [114.177, 22.319],
+                //   fill: colorGreen,
+                //   radius: 2000,
+                //   strokeWidth: 800,
+                //   stroke: "white",
+                //   tooltip: (
+                //     <Box>
+                //       <Box>TTL:&nbsp;2</Box>
+                //       <Box>hongkong.example.com</Box>
+                //     </Box>
+                //   ),
+                //   index: "2",
+                // },
+                // {
+                //   lonLat: [-118.408, 33.942],
+                //   fill: colorYellow,
+                //   radius: 2000,
+                //   strokeWidth: 800,
+                //   stroke: "white",
+                //   tooltip: (
+                //     <Box>
+                //       <Box>TTL:&nbsp;3</Box>
+                //       <Box>lax.example.com</Box>
+                //     </Box>
+                //   ),
+                //   index: "3",
+                // },
+              ]
+            }
           />
         )}
 

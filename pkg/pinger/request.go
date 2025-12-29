@@ -26,6 +26,9 @@ type SimplePingRequest struct {
 	RandomPayloadSize          *int
 	ResolveTimeoutMilliseconds *int
 	IPInfoProviderName         *string
+
+	// Currently, only 'icmp' is supported, and 'udp' is planned to be supported in the future
+	L3PacketType *string
 }
 
 const ParamTargets = "targets"
@@ -41,11 +44,16 @@ const ParamRandomPayloadSize = "randomPayloadSize"
 const ParamDestination = "destination"
 const ParamResolveTimeoutMilliseconds = "resolveTimeoutMilliseconds"
 const ParamsIPInfoProviderName = "ipInfoProviderName"
+const ParamL3PacketType = "l3PacketType"
 
 const defaultTTL = 64
 
 func ParseSimplePingRequest(r *http.Request) (*SimplePingRequest, error) {
 	result := new(SimplePingRequest)
+
+	if l3PacketType := r.URL.Query().Get(ParamL3PacketType); l3PacketType != "" {
+		result.L3PacketType = &l3PacketType
+	}
 
 	if ipInfoProviderName := r.URL.Query().Get(ParamsIPInfoProviderName); ipInfoProviderName != "" {
 		result.IPInfoProviderName = &ipInfoProviderName
@@ -202,6 +210,9 @@ func (pr *SimplePingRequest) ToURLValues() url.Values {
 	}
 	if pr.IPInfoProviderName != nil && *pr.IPInfoProviderName != "" {
 		vals.Add(ParamsIPInfoProviderName, *pr.IPInfoProviderName)
+	}
+	if pr.L3PacketType != nil && *pr.L3PacketType != "" {
+		vals.Add(ParamL3PacketType, *pr.L3PacketType)
 	}
 
 	return vals
