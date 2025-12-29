@@ -7,115 +7,12 @@ import (
 	"net"
 	"time"
 
-	pkgipinfo "example.com/rbmq-demo/pkg/ipinfo"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
 
-type ICMP4TransceiverConfig struct {
-	// ICMP ID to use
-	ID int
-}
-
-type ICMPSendRequest struct {
-	Dst  net.IPAddr
-	Seq  int
-	TTL  int
-	Data []byte
-}
-
-type ICMPReceiveReply struct {
-	ID   int
-	Size int
-	Seq  int
-	TTL  int
-
-	// the Src of the icmp echo reply, in string
-	Peer string
-
-	PeerRaw   net.Addr    `json:"-"`
-	PeerRawIP *net.IPAddr `json:"-"`
-
-	LastHop bool
-
-	PeerRDNS []string
-
-	ReceivedAt time.Time
-
-	ICMPTypeV4 *ipv4.ICMPType
-	ICMPTypeV6 *ipv6.ICMPType
-
-	SetMTUTo            *int
-	ShrinkICMPPayloadTo *int `json:"-"`
-
-	// below are left for ip information provider
-	PeerASN           *string
-	PeerLocation      *string
-	PeerISP           *string
-	PeerExactLocation *pkgipinfo.ExactLocation
-}
-
-func (icmpReply *ICMPReceiveReply) MarkLastHop(dst net.IPAddr) (clonedICMPReply *ICMPReceiveReply, isLastHop bool) {
-	if icmpReply == nil {
-		return nil, false
-	}
-	clonedICMPReply = new(ICMPReceiveReply)
-	*clonedICMPReply = *icmpReply
-	if icmpReply.PeerRawIP != nil && dst.IP.Equal(icmpReply.PeerRawIP.IP) {
-		clonedICMPReply.LastHop = true
-		return clonedICMPReply, true
-	}
-
-	if icmpReply.PeerRaw != nil && icmpReply.PeerRaw.String() == dst.IP.String() {
-		clonedICMPReply.LastHop = true
-		return clonedICMPReply, true
-	}
-
-	if dst.String() == icmpReply.Peer {
-		clonedICMPReply.LastHop = true
-		return clonedICMPReply, true
-	}
-	clonedICMPReply.LastHop = false
-	return clonedICMPReply, false
-}
-
-func (icmpReply *ICMPReceiveReply) ResolveIPInfo(ctx context.Context, ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter) (*ICMPReceiveReply, error) {
-	clonedICMPReply := new(ICMPReceiveReply)
-	*clonedICMPReply = *icmpReply
-	ipInfo, err := ipinfoAdapter.GetIPInfo(ctx, clonedICMPReply.Peer)
-	if err != nil {
-		return nil, err
-	}
-	if ipInfo == nil {
-		return clonedICMPReply, nil
-	}
-	if ipInfo.ASN != "" {
-		clonedICMPReply.PeerASN = &ipInfo.ASN
-	}
-	if ipInfo.Location != "" {
-		clonedICMPReply.PeerLocation = &ipInfo.Location
-	}
-	if ipInfo.ISP != "" {
-		clonedICMPReply.PeerISP = &ipInfo.ISP
-	}
-	if ipInfo.Exact != nil {
-		clonedICMPReply.PeerExactLocation = ipInfo.Exact
-	}
-	return clonedICMPReply, nil
-}
-
-func (icmpReply *ICMPReceiveReply) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPReceiveReply, error) {
-	clonedICMPReply := new(ICMPReceiveReply)
-	*clonedICMPReply = *icmpReply
-	ptrAnswers, err := resolver.LookupAddr(ctx, clonedICMPReply.Peer)
-	if err == nil {
-		clonedICMPReply.PeerRDNS = ptrAnswers
-	}
-	return clonedICMPReply, err
-}
-
-type ICMP4Transceiver struct {
+type UDPTransceiver struct {
 	id             int
 	packetConn     net.PacketConn
 	ipv4PacketConn *ipv4.PacketConn
@@ -128,9 +25,9 @@ type ICMP4Transceiver struct {
 	ReceiveC chan chan ICMPReceiveReply
 }
 
-func NewICMP4Transceiver(config ICMP4TransceiverConfig) (*ICMP4Transceiver, error) {
+func NewUDPTransceiver(config ICMP4TransceiverConfig) (*UDPTransceiver, error) {
 
-	tracer := &ICMP4Transceiver{
+	tracer := &UDPTransceiver{
 		id:       config.ID,
 		SendC:    make(chan ICMPSendRequest),
 		ReceiveC: make(chan chan ICMPReceiveReply),
@@ -139,7 +36,7 @@ func NewICMP4Transceiver(config ICMP4TransceiverConfig) (*ICMP4Transceiver, erro
 	return tracer, nil
 }
 
-func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
+func (icmp4tr *UDPTransceiver) Run(ctx context.Context) error {
 	conn, err := net.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
 		return fmt.Errorf("failed to listen on packet:icmp: %v", err)
@@ -369,20 +266,20 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 	return nil
 }
 
-func (icmp4tr *ICMP4Transceiver) GetSender() chan<- ICMPSendRequest {
+func (icmp4tr *UDPTransceiver) GetSender() chan<- ICMPSendRequest {
 	return icmp4tr.SendC
 }
 
-func (icmp4tr *ICMP4Transceiver) GetReceiver() chan<- chan ICMPReceiveReply {
+func (icmp4tr *UDPTransceiver) GetReceiver() chan<- chan ICMPReceiveReply {
 	return icmp4tr.ReceiveC
 }
 
-type ICMP6TransceiverConfig struct {
+type UDP6TransceiverConfig struct {
 	// ICMP ID to use
 	ID int
 }
 
-type ICMP6Transceiver struct {
+type UDP6Transceiver struct {
 	id             int
 	packetConn     net.PacketConn
 	ipv6PacketConn *ipv6.PacketConn
@@ -395,9 +292,9 @@ type ICMP6Transceiver struct {
 	ReceiveC chan chan ICMPReceiveReply
 }
 
-func NewICMP6Transceiver(config ICMP6TransceiverConfig) (*ICMP6Transceiver, error) {
+func NewUDP6Transceiver(config ICMP6TransceiverConfig) (*UDP6Transceiver, error) {
 
-	tracer := &ICMP6Transceiver{
+	tracer := &UDP6Transceiver{
 		id:       config.ID,
 		SendC:    make(chan ICMPSendRequest),
 		ReceiveC: make(chan chan ICMPReceiveReply),
@@ -406,7 +303,7 @@ func NewICMP6Transceiver(config ICMP6TransceiverConfig) (*ICMP6Transceiver, erro
 	return tracer, nil
 }
 
-func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
+func (icmp6tr *UDP6Transceiver) Run(ctx context.Context) error {
 	conn, err := net.ListenPacket("ip6:58", "::")
 	if err != nil {
 		return fmt.Errorf("failed to listen on packet:ip6-icmp: %v", err)
@@ -611,10 +508,10 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 	return nil
 }
 
-func (icmp6tr *ICMP6Transceiver) GetSender() chan<- ICMPSendRequest {
+func (icmp6tr *UDP6Transceiver) GetSender() chan<- ICMPSendRequest {
 	return icmp6tr.SendC
 }
 
-func (icmp6tr *ICMP6Transceiver) GetReceiver() chan<- chan ICMPReceiveReply {
+func (icmp6tr *UDP6Transceiver) GetReceiver() chan<- chan ICMPReceiveReply {
 	return icmp6tr.ReceiveC
 }
