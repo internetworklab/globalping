@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"time"
 
@@ -21,6 +22,8 @@ type ICMP4TransceiverConfig struct {
 	ID int
 
 	UDPBasePort *int
+
+	UseUDP bool
 }
 
 // add this udpbaseport with seq to get the actual udp dst port,
@@ -28,11 +31,10 @@ type ICMP4TransceiverConfig struct {
 const defaultUDPBasePort int = 33433
 
 type ICMPSendRequest struct {
-	Dst    net.IPAddr
-	Seq    int
-	TTL    int
-	Data   []byte
-	UseUDP bool
+	Dst  net.IPAddr
+	Seq  int
+	TTL  int
+	Data []byte
 }
 
 type ICMPReceiveReply struct {
@@ -110,6 +112,8 @@ func (icmpReply *ICMPReceiveReply) ResolveRDNS(ctx context.Context, resolver *ne
 type ICMP4Transceiver struct {
 	id int
 
+	useUDP bool
+
 	udpBasePort int
 
 	// User send requests to here, we retrieve the request,
@@ -127,6 +131,7 @@ func NewICMP4Transceiver(config ICMP4TransceiverConfig) (*ICMP4Transceiver, erro
 		SendC:       make(chan ICMPSendRequest),
 		ReceiveC:    make(chan chan ICMPReceiveReply),
 		udpBasePort: defaultUDPBasePort,
+		useUDP:      config.UseUDP,
 	}
 	if config.UDPBasePort != nil {
 		tracer.udpBasePort = *config.UDPBasePort
@@ -310,188 +315,182 @@ func getIDSeqPMTUFromOriginIPPacket4(rawICMPReply []byte, baseDstPort int) (iden
 	}
 }
 
-func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
+func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
+	errCh := make(chan error, 2)
+
 	conn, err := net.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
-		return fmt.Errorf("failed to listen on packet:icmp: %v", err)
-	}
-
-	// Set the DF (Don't Fragment) bit to prevent routers from fragmenting packets
-	// If fragmentation is needed, routers will send ICMP errors instead
-	if err := setDFBit(conn); err != nil {
-		log.Fatalf("failed to set DF bit: %v", err)
+		errCh <- fmt.Errorf("failed to listen on packet:icmp: %v", err)
+		return errCh
 	}
 
 	// Create a raw IP connection for sending UDP packets
 	rawConn, err := ipv4.NewRawConn(conn)
 	if err != nil {
-		return fmt.Errorf("failed to create raw connection: %v", err)
+		errCh <- fmt.Errorf("failed to create raw connection: %v", err)
+		return errCh
 	}
 
 	if err := rawConn.SetControlMessage(ipv4.FlagTTL|ipv4.FlagSrc|ipv4.FlagDst|ipv4.FlagInterface, true); err != nil {
-		log.Fatal(err)
+		errCh <- fmt.Errorf("failed to set control message: %v", err)
+		return errCh
 	}
 
+	// launch receiving goroutine
 	go func() {
-
 		bufSize := getMaximumMTU()
 		rb := make([]byte, bufSize)
 
-		// launch receiving goroutine
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case replysSubCh := <-icmp4tr.ReceiveC:
-					for {
-						hdr, payload, ctrlMsg, err := rawConn.ReadFrom(rb)
-						if err != nil {
-							if err, ok := err.(net.Error); ok && err.Timeout() {
-								continue
-							}
-							log.Printf("failed to read from connection: %v", err)
-							break
-						}
-
-						nBytes := hdr.TotalLen
-
-						receivedAt := time.Now()
-						replyObject := ICMPReceiveReply{
-							ID:         icmp4tr.id,
-							Size:       nBytes,
-							ReceivedAt: receivedAt,
-							Peer:       hdr.Src.String(),
-							TTL:        ctrlMsg.TTL,
-							Seq:        -1, // if can't determine, use -1
-						}
-						replyObject.PeerRaw = &net.IPAddr{IP: hdr.Src}
-						replyObject.PeerRawIP = &net.IPAddr{IP: hdr.Src}
-
-						pktIdentifier, err := getIDSeqPMTUFromOriginIPPacket4(payload, icmp4tr.udpBasePort)
-						if err != nil {
-							log.Printf("failed to parse ip packet, skipping: %v", err)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case replysSubCh := <-icmp4tr.ReceiveC:
+				for {
+					hdr, payload, ctrlMsg, err := rawConn.ReadFrom(rb)
+					if err != nil {
+						if err, ok := err.(net.Error); ok && err.Timeout() {
 							continue
 						}
-
-						if pktIdentifier.Id != icmp4tr.id {
-							log.Printf("packet id mismatch, ignoring: %v", pktIdentifier)
-							continue
-						}
-
-						replyObject.Seq = pktIdentifier.Seq
-						if pktIdentifier.PMTU != nil {
-							replyObject.SetMTUTo = pktIdentifier.PMTU
-							shrinkTo := *pktIdentifier.PMTU - ipv4HeaderLen - headerSizeICMP
-							if shrinkTo < 0 {
-								shrinkTo = 0
-							}
-							replyObject.ShrinkICMPPayloadTo = &shrinkTo
-						}
-						// pure icmp packet, with ip header stripped
-						replyObject.Size = nBytes
-						replyObject.IPProto = pktIdentifier.IPProto
-						replyObject.ICMPType = pktIdentifier.ICMPType
-						replyObject.ICMPCode = pktIdentifier.ICMPCode
-						replyObject.LastHop = pktIdentifier.LastHop
-
-						replysSubCh <- replyObject
-						markAsReceivedBytes(ctx, nBytes)
+						log.Printf("failed to read from connection: %v", err)
 						break
 					}
-				}
-			}
-		}()
 
-		// launch sending goroutine
-		go func() {
-			defer conn.Close()
-			defer rawConn.Close()
+					nBytes := hdr.TotalLen
 
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case req, ok := <-icmp4tr.SendC:
-					if !ok {
-						return
+					receivedAt := time.Now()
+					replyObject := ICMPReceiveReply{
+						ID:         icmp4tr.id,
+						Size:       nBytes,
+						ReceivedAt: receivedAt,
+						Peer:       hdr.Src.String(),
+						TTL:        ctrlMsg.TTL,
+						Seq:        -1, // if can't determine, use -1
 					}
+					replyObject.PeerRaw = &net.IPAddr{IP: hdr.Src}
+					replyObject.PeerRawIP = &net.IPAddr{IP: hdr.Src}
 
-					var wb []byte = nil
-					var err error = nil
-					var ipProtoNum int
-					if req.UseUDP {
-						ipProtoNum = int(layers.IPProtocolUDP)
-						udpDstPort := icmp4tr.udpBasePort + req.Seq
-
-						udpLayer := &layers.UDP{
-							SrcPort: layers.UDPPort(icmp4tr.id),
-							DstPort: layers.UDPPort(udpDstPort),
-						}
-
-						udpLayer.Payload = req.Data
-						maxPayloadLen := 65535 - udpHeaderLen
-						if len(udpLayer.Payload) > maxPayloadLen {
-							udpLayer.Payload = udpLayer.Payload[:maxPayloadLen]
-							log.Printf("truncated udp payload to %d bytes", maxPayloadLen)
-						}
-
-						udpTotalLen := udpHeaderLen + len(udpLayer.Payload)
-						udpLayer.Length = uint16(udpTotalLen)
-						if int(udpTotalLen) != int(udpLayer.Length) {
-							log.Printf("udp total length mismatch, the packet will be dropped, expected: %d, got: %d", udpTotalLen, udpLayer.Length)
-							continue
-						}
-
-						buf := gopacket.NewSerializeBuffer()
-						opts := gopacket.SerializeOptions{}
-						err = gopacket.SerializeLayers(buf, opts, udpLayer)
-						if err != nil {
-							log.Fatalf("failed to serialize udp layer: %v", err)
-						}
-						wb = buf.Bytes()
-					} else {
-						ipProtoNum = int(layers.IPProtocolICMPv4)
-						wm := icmp.Message{
-							Type: ipv4.ICMPTypeEcho,
-							Code: 0,
-							Body: &icmp.Echo{
-								ID:   icmp4tr.id,
-								Seq:  req.Seq,
-								Data: req.Data,
-							},
-						}
-						wb, err = wm.Marshal(nil)
-						if err != nil {
-							log.Fatalf("failed to marshal icmp message: %v", err)
-						}
-					}
-
-					iph := &ipv4.Header{
-						Version:  ipv4.Version,
-						Len:      ipv4.HeaderLen,
-						TotalLen: ipv4.HeaderLen + len(wb),
-						TTL:      req.TTL,
-						Flags:    ipv4.DontFragment,
-						Dst:      req.Dst.IP,
-						Protocol: ipProtoNum,
-					}
-
-					var cm *ipv4.ControlMessage = nil
-					if err := rawConn.WriteTo(iph, wb, cm); err != nil {
-						log.Fatalf("failed to write to connection: %v", err)
+					pktIdentifier, err := getIDSeqPMTUFromOriginIPPacket4(payload, icmp4tr.udpBasePort)
+					if err != nil {
+						log.Printf("failed to parse ip packet, skipping: %v", err)
 						continue
 					}
 
-					markAsSentBytes(ctx, iph.TotalLen)
+					if pktIdentifier.Id != icmp4tr.id {
+						log.Printf("packet id mismatch, ignoring: %v", pktIdentifier)
+						continue
+					}
+
+					replyObject.Seq = pktIdentifier.Seq
+					if pktIdentifier.PMTU != nil {
+						replyObject.SetMTUTo = pktIdentifier.PMTU
+						shrinkTo := *pktIdentifier.PMTU - ipv4HeaderLen - headerSizeICMP
+						if shrinkTo < 0 {
+							shrinkTo = 0
+						}
+						replyObject.ShrinkICMPPayloadTo = &shrinkTo
+					}
+					// pure icmp packet, with ip header stripped
+					replyObject.Size = nBytes
+					replyObject.IPProto = pktIdentifier.IPProto
+					replyObject.ICMPType = pktIdentifier.ICMPType
+					replyObject.ICMPCode = pktIdentifier.ICMPCode
+					replyObject.LastHop = pktIdentifier.LastHop
+
+					replysSubCh <- replyObject
+					markAsReceivedBytes(ctx, nBytes)
+					break
 				}
 			}
-		}()
-
-		<-ctx.Done()
+		}
 	}()
 
-	return nil
+	// launch sending goroutine
+	go func() {
+		defer conn.Close()
+		defer rawConn.Close()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case req, ok := <-icmp4tr.SendC:
+				if !ok {
+					return
+				}
+
+				var wb []byte = nil
+				var err error = nil
+				var ipProtoNum int
+				if icmp4tr.useUDP {
+					ipProtoNum = int(layers.IPProtocolUDP)
+					udpDstPort := icmp4tr.udpBasePort + req.Seq
+
+					udpLayer := &layers.UDP{
+						SrcPort: layers.UDPPort(icmp4tr.id),
+						DstPort: layers.UDPPort(udpDstPort),
+					}
+
+					udpLayer.Payload = req.Data
+					maxPayloadLen := 65535 - udpHeaderLen
+					if len(udpLayer.Payload) > maxPayloadLen {
+						udpLayer.Payload = udpLayer.Payload[:maxPayloadLen]
+						log.Printf("truncated udp payload to %d bytes", maxPayloadLen)
+					}
+
+					udpTotalLen := udpHeaderLen + len(udpLayer.Payload)
+					udpLayer.Length = uint16(udpTotalLen)
+					if int(udpTotalLen) != int(udpLayer.Length) {
+						log.Printf("udp total length mismatch, the packet will be dropped, expected: %d, got: %d", udpTotalLen, udpLayer.Length)
+						continue
+					}
+
+					buf := gopacket.NewSerializeBuffer()
+					opts := gopacket.SerializeOptions{}
+					err = gopacket.SerializeLayers(buf, opts, udpLayer)
+					if err != nil {
+						log.Fatalf("failed to serialize udp layer: %v", err)
+					}
+					wb = buf.Bytes()
+				} else {
+					ipProtoNum = int(layers.IPProtocolICMPv4)
+					wm := icmp.Message{
+						Type: ipv4.ICMPTypeEcho,
+						Code: 0,
+						Body: &icmp.Echo{
+							ID:   icmp4tr.id,
+							Seq:  req.Seq,
+							Data: req.Data,
+						},
+					}
+					wb, err = wm.Marshal(nil)
+					if err != nil {
+						log.Fatalf("failed to marshal icmp message: %v", err)
+					}
+				}
+
+				iph := &ipv4.Header{
+					Version:  ipv4.Version,
+					Len:      ipv4.HeaderLen,
+					TotalLen: ipv4.HeaderLen + len(wb),
+					TTL:      req.TTL,
+					Flags:    ipv4.DontFragment,
+					Dst:      req.Dst.IP,
+					Protocol: ipProtoNum,
+				}
+
+				var cm *ipv4.ControlMessage = nil
+				if err := rawConn.WriteTo(iph, wb, cm); err != nil {
+					log.Fatalf("failed to write to connection: %v", err)
+					continue
+				}
+
+				markAsSentBytes(ctx, iph.TotalLen)
+			}
+		}
+	}()
+
+	return errCh
 }
 
 func (icmp4tr *ICMP4Transceiver) GetSender() chan<- ICMPSendRequest {
@@ -503,14 +502,11 @@ func (icmp4tr *ICMP4Transceiver) GetReceiver() chan<- chan ICMPReceiveReply {
 }
 
 type ICMP6TransceiverConfig struct {
-	// ICMP ID to use
-	ID int
+	UseUDP bool
 }
 
 type ICMP6Transceiver struct {
-	id             int
-	packetConn     net.PacketConn
-	ipv6PacketConn *ipv6.PacketConn
+	useUDP bool
 
 	// User send requests to here, we retrieve the request,
 	// then we translate it to the wire format.
@@ -521,37 +517,38 @@ type ICMP6Transceiver struct {
 }
 
 func NewICMP6Transceiver(config ICMP6TransceiverConfig) (*ICMP6Transceiver, error) {
-
 	tracer := &ICMP6Transceiver{
-		id:       config.ID,
 		SendC:    make(chan ICMPSendRequest),
 		ReceiveC: make(chan chan ICMPReceiveReply),
+		useUDP:   config.UseUDP,
 	}
 
 	return tracer, nil
 }
 
-func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
-	conn, err := net.ListenPacket("ip6:58", "::")
-	if err != nil {
-		return fmt.Errorf("failed to listen on packet:ip6-icmp: %v", err)
-	}
+func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
+
+	errCh := make(chan error, 2)
+	traceIdCh := make(chan int, 1)
+
+	// launch receiving goroutine
 	go func() {
+
+		bufSize := getMaximumMTU()
+		rb := make([]byte, bufSize)
+
+		ip6Icmp := fmt.Sprintf("%d", int(layers.IPProtocolICMPv6))
+		conn, err := net.ListenPacket("ip6:"+ip6Icmp, "::")
+		if err != nil {
+			errCh <- fmt.Errorf("failed to listen on packet:ip6-icmp: %v", err)
+			return
+		}
 		defer conn.Close()
 
-		icmp6tr.packetConn = conn
-		icmp6tr.ipv6PacketConn = ipv6.NewPacketConn(conn)
-
-		if err := icmp6tr.ipv6PacketConn.SetControlMessage(ipv6.FlagHopLimit|ipv6.FlagSrc|ipv6.FlagDst|ipv6.FlagInterface, true); err != nil {
-			log.Fatal(err)
-		}
-
-		wm := icmp.Message{
-			Type: ipv6.ICMPTypeEchoRequest, Code: 0,
-			Body: &icmp.Echo{
-				ID:   icmp6tr.id,
-				Data: nil,
-			},
+		packetConn := ipv6.NewPacketConn(conn)
+		if err := packetConn.SetControlMessage(ipv6.FlagHopLimit|ipv6.FlagSrc|ipv6.FlagDst|ipv6.FlagInterface, true); err != nil {
+			errCh <- fmt.Errorf("failed to set control message: %v", err)
+			return
 		}
 
 		var f ipv6.ICMPFilter
@@ -559,181 +556,136 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 		f.Accept(ipv6.ICMPTypeTimeExceeded)
 		f.Accept(ipv6.ICMPTypeEchoReply)
 		f.Accept(ipv6.ICMPTypePacketTooBig)
-		if err := icmp6tr.ipv6PacketConn.SetICMPFilter(&f); err != nil {
+
+		// when use udp for traceroute, expect to see a port-unreachable when packet reaches the end
+		f.Accept(ipv6.ICMPTypeDestinationUnreachable)
+		if err := packetConn.SetICMPFilter(&f); err != nil {
 			log.Fatal(err)
 		}
 
-		var wcm ipv6.ControlMessage
-		bufSize := getMaximumMTU()
-		rb := make([]byte, bufSize)
+		traceId := <-traceIdCh
 
-		// launch receiving goroutine
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case replySubCh := <-icmp6tr.ReceiveC:
-					for {
-						nBytes, ctrlMsg, peerAddr, err := icmp6tr.ipv6PacketConn.ReadFrom(rb)
-						if err != nil {
-							if err, ok := err.(net.Error); ok && err.Timeout() {
-								log.Printf("timeout reading from connection, skipping")
-								continue
-							}
-							log.Printf("failed to read from connection: %v", err)
-							break
-						}
-
-						// 58 is the ICMPv6 protocol number in IPv6 header's protocol field
-						receiveMsg, err := icmp.ParseMessage(protocolNumberICMPv6, rb[:nBytes])
-						if err != nil {
-							log.Fatalf("failed to parse icmp message: %v", err)
-						}
-
-						receivedAt := time.Now()
-						replyObject := ICMPReceiveReply{
-							ID:         icmp6tr.id,
-							Size:       nBytes,
-							ReceivedAt: receivedAt,
-							Peer:       peerAddr.String(),
-							TTL:        ctrlMsg.HopLimit,
-							Seq:        -1, // if can't determine, use -1
-						}
-
-						var ty ipv6.ICMPType
-
-						switch receiveMsg.Type {
-						case ipv6.ICMPTypePacketTooBig:
-							ty = ipv6.ICMPTypePacketTooBig
-							packetTooBigBody, ok := receiveMsg.Body.(*icmp.PacketTooBig)
-							if !ok {
-								log.Printf("Invalid ICMP Packet Too Big body: %+v", receiveMsg)
-								continue
-							}
-
-							// Extract MTU from PacketTooBig message
-							mtu := packetTooBigBody.MTU
-							replyObject.SetMTUTo = &mtu
-							shrinkTo := mtu - ipv6HeaderLen - headerSizeICMP
-							if shrinkTo < 0 {
-								shrinkTo = 0
-							}
-							replyObject.ShrinkICMPPayloadTo = &shrinkTo
-
-							// Extract original ICMP message from PacketTooBig body
-							if len(packetTooBigBody.Data) < ipv6HeaderLen+headerSizeICMP {
-								log.Printf("Invalid ICMP Packet Too Big body: %+v", receiveMsg)
-								continue
-							}
-
-							// Skip IPv6 header (fixed 40 bytes)
-							originalICMPData := packetTooBigBody.Data[ipv6HeaderLen:]
-							originalICMPMsg, err := icmp.ParseMessage(protocolNumberICMPv6, originalICMPData)
-							if err != nil {
-								log.Printf("Invalid ICMP Packet Too Big message: %+v error: %+v", receiveMsg, err)
-								continue
-							}
-
-							echoBody, ok := originalICMPMsg.Body.(*icmp.Echo)
-							if !ok {
-								log.Printf("Invalid ICMP Packet Too Big message: %+v", receiveMsg)
-								continue
-							}
-
-							replyObject.Seq = echoBody.Seq
-							replyObject.ID = echoBody.ID
-						case ipv6.ICMPTypeTimeExceeded:
-							ty = ipv6.ICMPTypeTimeExceeded
-
-							// Extract original ICMP message from TimeExceeded body
-							timeExceededBody, ok := receiveMsg.Body.(*icmp.TimeExceeded)
-
-							// Skip IPv6 header (fixed 40 bytes)
-
-							if !ok || len(timeExceededBody.Data) < ipv6HeaderLen+headerSizeICMP {
-								log.Printf("Invalid ICMP Time-Exceeded body: %+v", receiveMsg)
-								continue
-							}
-
-							// Parse the original ICMP message (protocol 58 for ICMPv6)
-							originalICMPData := timeExceededBody.Data[ipv6HeaderLen:]
-							originalICMPMsg, err := icmp.ParseMessage(protocolNumberICMPv6, originalICMPData)
-							if err != nil {
-								log.Printf("Invalid ICMP Time-Exceeded message: %+v error: %+v", receiveMsg, err)
-								continue
-							}
-
-							echoBody, ok := originalICMPMsg.Body.(*icmp.Echo)
-							if !ok {
-								log.Printf("Invalid ICMP Time-Exceeded message: %+v", receiveMsg)
-								continue
-							}
-
-							replyObject.Seq = echoBody.Seq
-							replyObject.ID = echoBody.ID
-
-						case ipv6.ICMPTypeEchoReply:
-							ty = ipv6.ICMPTypeEchoReply
-							icmpBody, ok := receiveMsg.Body.(*icmp.Echo)
-							if !ok {
-								log.Printf("failed to parse icmp body: %+v", receiveMsg)
-								continue
-							}
-							replyObject.Seq = icmpBody.Seq
-							replyObject.ID = icmpBody.ID
-						default:
-							log.Printf("unknown ICMP message: %+v", receiveMsg)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case replySubCh := <-icmp6tr.ReceiveC:
+				for {
+					nBytes, ctrlMsg, peerAddr, err := packetConn.ReadFrom(rb)
+					if err != nil {
+						if err, ok := err.(net.Error); ok && err.Timeout() {
+							log.Printf("timeout reading from connection, skipping")
 							continue
 						}
-
-						if replyObject.ID != icmp6tr.id {
-							// silently ignore the message that is not for us
-							continue
-						}
-
-						replyObject.ICMPTypeV6 = &ty
-						replySubCh <- replyObject
-						markAsReceivedBytes(ctx, nBytes)
+						log.Printf("failed to read from connection: %v", err)
 						break
 					}
+
+					// 58 is the ICMPv6 protocol number in IPv6 header's protocol field
+					receiveMsg, err := icmp.ParseMessage(protocolNumberICMPv6, rb[:nBytes])
+					if err != nil {
+						log.Fatalf("failed to parse icmp message: %v", err)
+					}
+					ty := receiveMsg.Type.Protocol()
+					cd := receiveMsg.Code
+
+					receivedAt := time.Now()
+					replyObject := ICMPReceiveReply{
+						ID:         traceId,
+						Size:       nBytes,
+						ReceivedAt: receivedAt,
+						Peer:       peerAddr.String(),
+						TTL:        ctrlMsg.HopLimit,
+						Seq:        -1, // if can't determine, use -1
+						ICMPType:   &ty,
+						ICMPCode:   &cd,
+					}
+
+					if replyObject.ID != traceId {
+						// silently ignore the message that is not for us
+						continue
+					}
+
+					replySubCh <- replyObject
+					markAsReceivedBytes(ctx, nBytes)
+					break
 				}
 			}
-		}()
-
-		// launch sending goroutine
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case req, ok := <-icmp6tr.SendC:
-					if !ok {
-						return
-					}
-
-					wm.Body.(*icmp.Echo).Seq = req.Seq
-					wm.Body.(*icmp.Echo).Data = req.Data
-					wb, err := wm.Marshal(nil)
-					if err != nil {
-						log.Fatalf("failed to marshal icmp message: %v", err)
-					}
-
-					wcm.HopLimit = req.TTL
-					dst := req.Dst
-					nbytes, err := icmp6tr.ipv6PacketConn.WriteTo(wb, &wcm, &dst)
-					if err != nil {
-						log.Fatalf("failed to write to connection: %v", err)
-					}
-					markAsSentBytes(ctx, nbytes)
-				}
-			}
-		}()
-
-		<-ctx.Done()
+		}
 	}()
 
-	return nil
+	// launch sending goroutine
+	go func() {
+		var traceId int
+		var packetConn net.PacketConn
+		var err error
+
+		var ipv6PacketConn *ipv6.PacketConn
+
+		if icmp6tr.useUDP {
+			packetConn, err = net.ListenPacket("udp", "[::]:0")
+			if err != nil {
+				errCh <- fmt.Errorf("failed to listen on udp: %v", err)
+				return
+			}
+
+			udpAddr, ok := packetConn.LocalAddr().(*net.UDPAddr)
+			if !ok {
+				panic("failed to cast local address to *net.UDPAddr")
+			}
+			traceId = udpAddr.Port
+			ipv6PacketConn = ipv6.NewPacketConn(packetConn)
+		} else {
+			traceId = rand.Intn(65536)
+			c, err := net.ListenPacket("ip6:58", "::") // ICMP for IPv6
+			if err != nil {
+				errCh <- fmt.Errorf("failed to listen on packet:ip6-icmp: %v", err)
+				return
+			}
+			ipv6PacketConn = ipv6.NewPacketConn(c)
+		}
+
+		var wcm ipv6.ControlMessage
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case req, ok := <-icmp6tr.SendC:
+				if !ok {
+					return
+				}
+
+				var wb []byte
+				if icmp6tr.useUDP {
+					wm := icmp.Message{
+						Type: ipv6.ICMPTypeEchoRequest, Code: 0,
+						Body: &icmp.Echo{
+							ID:   traceId,
+							Seq:  req.Seq,
+							Data: req.Data,
+						},
+					}
+					wb, err = wm.Marshal(nil)
+					if err != nil {
+						log.Printf("failed to marshal icmp message: %v", err)
+						continue
+					}
+				}
+
+				wcm.HopLimit = req.TTL
+				dst := req.Dst
+				nbytes, err := ipv6PacketConn.WriteTo(wb, &wcm, &dst)
+				if err != nil {
+					log.Fatalf("failed to write to connection: %v", err)
+				}
+
+				markAsSentBytes(ctx, nbytes)
+			}
+		}
+	}()
+
+	return errCh
 }
 
 func (icmp6tr *ICMP6Transceiver) GetSender() chan<- ICMPSendRequest {

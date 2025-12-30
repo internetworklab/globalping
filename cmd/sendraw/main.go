@@ -11,6 +11,7 @@ import (
 	"github.com/google/gopacket/layers"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 func sendTracertUDP() {
@@ -53,6 +54,50 @@ func sendTracertUDP() {
 	if err := r.WriteTo(iph, udpBytes, cm); err != nil {
 		log.Fatalf("failed to send raw ip packet: %v", err)
 	}
+}
+
+func sendTracertUDP6() {
+	listenAddr := fmt.Sprintf("[::]:%d", 0)
+	ln, err := net.ListenPacket("udp", listenAddr)
+	if err != nil {
+		log.Fatalf("failed to listen on udp: %v", err)
+	}
+	defer ln.Close()
+
+	udpAddr, ok := ln.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		panic("failed to cast local address to *net.UDPAddr")
+	}
+	log.Printf("source port will be: %d", udpAddr.Port)
+
+	p := ipv6.NewPacketConn(ln)
+	p.SetHopLimit(1)
+
+	dst := net.ParseIP("2a00:1450:4001:813::200e")
+	dstPort := 13325
+	dstAddr := &net.UDPAddr{
+		IP:   dst,
+		Port: dstPort,
+	}
+	var cm *ipv6.ControlMessage = nil
+	n, err := p.WriteTo(nil, cm, dstAddr)
+	if err != nil {
+		log.Fatalf("failed to write to connection: %v", err)
+	}
+	log.Printf("wrote %d bytes to %s", n, dstAddr.String())
+
+	// send a long ttl packet
+	dstPort = 34433+63
+	dstAddr = &net.UDPAddr{
+		IP:   dst,
+		Port: dstPort,
+	}
+	p.SetHopLimit(63)
+	n, err = p.WriteTo([]byte("hello"), cm, dstAddr)
+	if err != nil {
+		log.Fatalf("failed to write second packet to the connection: %v", err)
+	}
+	log.Printf("wrote %d bytes to %s", n, dstAddr.String())
 }
 
 func sendICMPEcho() {
@@ -115,11 +160,18 @@ func sendICMPEcho() {
 }
 
 func main() {
+	log.Printf("--------------------------------")
 	log.Printf("Sending raw UDP/IP packet for traceroute ...")
 	sendTracertUDP()
 	log.Printf("UDP is sent, waiting for 3 seconds to send next packet (ICMP echo) ...")
-	time.Sleep(3 * time.Second)
+	time.Sleep(1 * time.Second)
+	log.Printf("--------------------------------")
 	log.Printf("Sending raw ICMP echo packet ...")
 	sendICMPEcho()
+	log.Printf("ICMP is sent, waiting for 3 seconds to send next packet (UDP/IP traceroute) ...")
+	time.Sleep(1 * time.Second)
+	log.Printf("--------------------------------")
+	log.Printf("Sending raw UDP6/IPv6 packet for traceroute ...")
+	sendTracertUDP6()
 	log.Println("All done.")
 }

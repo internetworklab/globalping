@@ -92,28 +92,26 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		udpPort := sp.PingRequest.UDPDstPort
 
 		var transceiver pkgraw.GeneralICMPTransceiver
+		var transceiverErrCh <-chan error
 		if dst.IP.To4() != nil {
 			icmp4tr, err := pkgraw.NewICMP4Transceiver(pkgraw.ICMP4TransceiverConfig{
 				ID:          icmpId,
 				UDPBasePort: udpPort,
+				UseUDP:      useUDP,
 			})
 			if err != nil {
 				log.Fatalf("failed to create ICMP4 transceiver: %v", err)
 			}
-			if err := icmp4tr.Run(ctx); err != nil {
-				log.Fatalf("failed to run ICMP4 transceiver: %v", err)
-			}
+			transceiverErrCh = icmp4tr.Run(ctx)
 			transceiver = icmp4tr
 		} else {
 			icmp6tr, err := pkgraw.NewICMP6Transceiver(pkgraw.ICMP6TransceiverConfig{
-				ID: icmpId,
+				UseUDP: useUDP,
 			})
 			if err != nil {
 				log.Fatalf("failed to create ICMP6 transceiver: %v", err)
 			}
-			if err := icmp6tr.Run(ctx); err != nil {
-				log.Fatalf("failed to run ICMP6 transceiver: %v", err)
-			}
+			transceiverErrCh = icmp6tr.Run(ctx)
 			transceiver = icmp6tr
 		}
 
@@ -218,6 +216,9 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 				case <-ctx.Done():
 					log.Printf("In ICMPSending goroutine for %s, got context done", dst.String())
 					return
+				case err := <-transceiverErrCh:
+					log.Printf("In ICMPSending goroutine for %s, got transceiver error: %v", dst.String(), err)
+					return
 				case ttl, ok := <-ttlCh:
 					if !ok {
 						log.Printf("In ICMPSending goroutine for %s, no more TTL values will be generated", dst.String())
@@ -225,10 +226,9 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					}
 
 					req := pkgraw.ICMPSendRequest{
-						Seq:    numPktsSent + 1,
-						TTL:    ttl,
-						Dst:    dst,
-						UseUDP: useUDP,
+						Seq: numPktsSent + 1,
+						TTL: ttl,
+						Dst: dst,
 					}
 
 					if payloadManager != nil {
