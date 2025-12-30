@@ -274,7 +274,8 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 					opts := gopacket.SerializeOptions{}
 					err = gopacket.SerializeLayers(buf, opts, udpLayer)
 					if err != nil {
-						log.Fatalf("failed to serialize udp layer: %v", err)
+						errCh <- fmt.Errorf("failed to serialize udp layer: %v", err)
+						return
 					}
 					wb = buf.Bytes()
 				} else {
@@ -290,7 +291,8 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 					}
 					wb, err = wm.Marshal(nil)
 					if err != nil {
-						log.Fatalf("failed to marshal icmp message: %v", err)
+						errCh <- fmt.Errorf("failed to marshal icmp message: %v", err)
+						return
 					}
 				}
 
@@ -306,8 +308,8 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 
 				var cm *ipv4.ControlMessage = nil
 				if err := rawConn.WriteTo(iph, wb, cm); err != nil {
-					log.Fatalf("failed to write to connection: %v", err)
-					continue
+					errCh <- fmt.Errorf("failed to write to connection: %v", err)
+					return
 				}
 
 				markAsSentBytes(ctx, iph.TotalLen)
@@ -392,7 +394,8 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 		// when use udp for traceroute, expect to see a port-unreachable when packet reaches the end
 		f.Accept(ipv6.ICMPTypeDestinationUnreachable)
 		if err := packetConn.SetICMPFilter(&f); err != nil {
-			log.Fatal(err)
+			errCh <- fmt.Errorf("failed to set icmp filter: %v", err)
+			return
 		}
 
 		traceId := <-traceIdCh
@@ -409,8 +412,8 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 							log.Printf("timeout reading from connection, skipping")
 							continue
 						}
-						log.Printf("failed to read from connection: %v", err)
-						break
+						errCh <- fmt.Errorf("failed to read from connection: %v", err)
+						return
 					}
 
 					receiveMsg, err := icmp.ParseMessage(protocolNumberICMPv6, rb[:nBytes])
@@ -598,7 +601,8 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 				wcm.HopLimit = req.TTL
 				nbytes, err := ipv6PacketConn.WriteTo(wb, &wcm, dst)
 				if err != nil {
-					log.Fatalf("failed to write to connection: %v", err)
+					errCh <- fmt.Errorf("failed to write to connection: %v", err)
+					return
 				}
 
 				markAsSentBytes(ctx, nbytes)
