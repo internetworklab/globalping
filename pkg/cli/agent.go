@@ -67,6 +67,8 @@ type AgentCmd struct {
 	// Prometheus stuffs
 	MetricsListenAddress string `help:"Endpoint to expose prometheus metrics" default:":2112"`
 	MetricsPath          string `help:"Path to expose prometheus metrics" default:"/metrics"`
+
+	SupportUDP bool `help:"Declare supportness for UDP traceroute" default:"false"`
 }
 
 type PingHandler struct {
@@ -361,6 +363,10 @@ func (agentCmd *AgentCmd) Run() error {
 				log.Fatalf("failed to marshal domain respond range: %v", err)
 			}
 			attributes[pkgnodereg.AttributeKeyDomainRespondRange] = string(rangesJsonB)
+		}
+
+		if agentCmd.SupportUDP {
+			attributes[pkgnodereg.AttributeKeySupportUDP] = "true"
 		}
 
 		agent := pkgnodereg.NodeRegistrationAgent{
