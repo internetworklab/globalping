@@ -25,6 +25,20 @@ type ICMPTrackerEntry struct {
 	Raw          []ICMPReceiveReply
 }
 
+func (itEnt *ICMPTrackerEntry) FoundLastHop() bool {
+	if itEnt == nil {
+		return false
+	}
+
+	for _, reply := range itEnt.Raw {
+		if reply.LastHop {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (itEnt *ICMPTrackerEntry) ResolveIPInfo(ctx context.Context, ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter) (*ICMPTrackerEntry, error) {
 	wrappedEV := new(ICMPTrackerEntry)
 	*wrappedEV = *itEnt

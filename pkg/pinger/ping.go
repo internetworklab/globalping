@@ -94,7 +94,8 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		var transceiver pkgraw.GeneralICMPTransceiver
 		if dst.IP.To4() != nil {
 			icmp4tr, err := pkgraw.NewICMP4Transceiver(pkgraw.ICMP4TransceiverConfig{
-				ID: icmpId,
+				ID:          icmpId,
+				UDPBasePort: udpPort,
 			})
 			if err != nil {
 				log.Fatalf("failed to create ICMP4 transceiver: %v", err)
@@ -140,6 +141,12 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					return
 				case ev := <-tracker.RecvEvC:
 					var wrappedEV *pkgraw.ICMPTrackerEntry = &ev
+
+					if wrappedEV.FoundLastHop() {
+						if autoTTL, ok := pingRequest.TTL.(*AutoTTL); ok {
+							autoTTL.Reset()
+						}
+					}
 
 					if sp.IPInfoAdapter != nil {
 						wrappedEV, err = wrappedEV.ResolveIPInfo(ctx, sp.IPInfoAdapter)
@@ -218,11 +225,10 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					}
 
 					req := pkgraw.ICMPSendRequest{
-						Seq:        numPktsSent + 1,
-						TTL:        ttl,
-						Dst:        dst,
-						UseUDP:     useUDP,
-						UDPDstPort: udpPort,
+						Seq:    numPktsSent + 1,
+						TTL:    ttl,
+						Dst:    dst,
+						UseUDP: useUDP,
 					}
 
 					if payloadManager != nil {

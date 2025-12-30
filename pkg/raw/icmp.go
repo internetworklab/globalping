@@ -19,6 +19,8 @@ import (
 type ICMP4TransceiverConfig struct {
 	// ICMP ID to use
 	ID int
+
+	UDPBasePort *int
 }
 
 // add this udpbaseport with seq to get the actual udp dst port,
@@ -26,12 +28,11 @@ type ICMP4TransceiverConfig struct {
 const defaultUDPBasePort int = 33433
 
 type ICMPSendRequest struct {
-	Dst        net.IPAddr
-	Seq        int
-	TTL        int
-	Data       []byte
-	UseUDP     bool
-	UDPDstPort *int
+	Dst    net.IPAddr
+	Seq    int
+	TTL    int
+	Data   []byte
+	UseUDP bool
 }
 
 type ICMPReceiveReply struct {
@@ -109,6 +110,8 @@ func (icmpReply *ICMPReceiveReply) ResolveRDNS(ctx context.Context, resolver *ne
 type ICMP4Transceiver struct {
 	id int
 
+	udpBasePort int
+
 	// User send requests to here, we retrieve the request,
 	// then we translate it to the wire format.
 	SendC chan ICMPSendRequest
@@ -120,9 +123,13 @@ type ICMP4Transceiver struct {
 func NewICMP4Transceiver(config ICMP4TransceiverConfig) (*ICMP4Transceiver, error) {
 
 	tracer := &ICMP4Transceiver{
-		id:       config.ID,
-		SendC:    make(chan ICMPSendRequest),
-		ReceiveC: make(chan chan ICMPReceiveReply),
+		id:          config.ID,
+		SendC:       make(chan ICMPSendRequest),
+		ReceiveC:    make(chan chan ICMPReceiveReply),
+		udpBasePort: defaultUDPBasePort,
+	}
+	if config.UDPBasePort != nil {
+		tracer.udpBasePort = *config.UDPBasePort
 	}
 
 	return tracer, nil
@@ -262,20 +269,41 @@ func getIDSeqPMTUFromOriginIPPacket4(rawICMPReply []byte, baseDstPort int) (iden
 		identifier.IPProto = int(originIPPacket.Protocol)
 		identifier.LastHop = false
 
-		originICMPLayer := originPacket.Layer(layers.LayerTypeICMPv4)
-		if originICMPLayer == nil {
-			err = fmt.Errorf("failed to extract origin icmp layer")
-			return identifier, err
-		}
+		if originIPPacket.Protocol == layers.IPProtocolICMPv4 {
+			originICMPLayer := originPacket.Layer(layers.LayerTypeICMPv4)
+			if originICMPLayer == nil {
+				err = fmt.Errorf("failed to extract origin icmp layer")
+				return identifier, err
+			}
 
-		originICMPPacket, ok := originICMPLayer.(*layers.ICMPv4)
-		if !ok {
-			err = fmt.Errorf("failed to cast origin icmp layer to origin icmp packet")
+			originICMPPacket, ok := originICMPLayer.(*layers.ICMPv4)
+			if !ok {
+				err = fmt.Errorf("failed to cast origin icmp layer to origin icmp packet")
+				return identifier, err
+			}
+
+			identifier.Id = int(originICMPPacket.Id)
+			identifier.Seq = int(originICMPPacket.Seq)
+			return identifier, err
+		} else if originIPPacket.Protocol == layers.IPProtocolUDP {
+			originUDPLayer := originPacket.Layer(layers.LayerTypeUDP)
+			if originUDPLayer == nil {
+				err = fmt.Errorf("failed to extract origin udp layer")
+				return identifier, err
+			}
+
+			originUDPPacket, ok := originUDPLayer.(*layers.UDP)
+			if !ok {
+				err = fmt.Errorf("failed to cast origin udp layer to origin udp packet")
+				return identifier, err
+			}
+			identifier.Id = int(originUDPPacket.SrcPort)
+			identifier.Seq = int(originUDPPacket.DstPort) - baseDstPort
+			return identifier, err
+		} else {
+			err = fmt.Errorf("unknown origin ip protocol: %d", originIPPacket.Protocol)
 			return identifier, err
 		}
-		identifier.Id = int(originICMPPacket.Id)
-		identifier.Seq = int(originICMPPacket.Seq)
-		return identifier, err
 	} else {
 		err = fmt.Errorf("unknown icmp type: %d", icmpPacket.TypeCode.Type())
 		return identifier, err
@@ -340,12 +368,11 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 						replyObject.PeerRaw = &net.IPAddr{IP: hdr.Src}
 						replyObject.PeerRawIP = &net.IPAddr{IP: hdr.Src}
 
-						pktIdentifier, err := getIDSeqPMTUFromOriginIPPacket4(payload, 0)
+						pktIdentifier, err := getIDSeqPMTUFromOriginIPPacket4(payload, icmp4tr.udpBasePort)
 						if err != nil {
 							log.Printf("failed to parse ip packet, skipping: %v", err)
 							continue
 						}
-						log.Printf("pktIdentifier: %s", pktIdentifier.String())
 
 						if pktIdentifier.Id != icmp4tr.id {
 							log.Printf("packet id mismatch, ignoring: %v", pktIdentifier)
@@ -392,13 +419,10 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 
 					var wb []byte = nil
 					var err error = nil
+					var ipProtoNum int
 					if req.UseUDP {
-						udpDstPort := -1
-						if req.UDPDstPort != nil {
-							udpDstPort = *req.UDPDstPort
-						} else {
-							udpDstPort = defaultUDPBasePort + req.Seq
-						}
+						ipProtoNum = int(layers.IPProtocolUDP)
+						udpDstPort := icmp4tr.udpBasePort + req.Seq
 
 						udpLayer := &layers.UDP{
 							SrcPort: layers.UDPPort(icmp4tr.id),
@@ -406,7 +430,7 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 						}
 
 						udpLayer.Payload = req.Data
-						maxPayloadLen := 65535-udpHeaderLen
+						maxPayloadLen := 65535 - udpHeaderLen
 						if len(udpLayer.Payload) > maxPayloadLen {
 							udpLayer.Payload = udpLayer.Payload[:maxPayloadLen]
 							log.Printf("truncated udp payload to %d bytes", maxPayloadLen)
@@ -427,6 +451,7 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 						}
 						wb = buf.Bytes()
 					} else {
+						ipProtoNum = int(layers.IPProtocolICMPv4)
 						wm := icmp.Message{
 							Type: ipv4.ICMPTypeEcho,
 							Code: 0,
@@ -449,12 +474,9 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 						TTL:      req.TTL,
 						Flags:    ipv4.DontFragment,
 						Dst:      req.Dst.IP,
+						Protocol: ipProtoNum,
 					}
-					if req.UseUDP {
-						iph.Protocol = int(layers.IPProtocolUDP)
-					} else {
-						iph.Protocol = int(layers.IPProtocolICMPv4)
-					}
+
 					var cm *ipv4.ControlMessage = nil
 					if err := rawConn.WriteTo(iph, wb, cm); err != nil {
 						log.Fatalf("failed to write to connection: %v", err)
