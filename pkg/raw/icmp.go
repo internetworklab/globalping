@@ -45,7 +45,6 @@ type ICMPReceiveReply struct {
 	// the Src of the icmp echo reply, in string
 	Peer string
 
-	PeerRaw   net.Addr    `json:"-"`
 	PeerRawIP *net.IPAddr `json:"-"`
 
 	LastHop bool
@@ -194,7 +193,6 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 						Seq:        -1, // if can't determine, use -1
 						INetFamily: ipv4.Version,
 					}
-					replyObject.PeerRaw = &net.IPAddr{IP: hdr.Src}
 					replyObject.PeerRawIP = &net.IPAddr{IP: hdr.Src}
 
 					pktIdentifier, err := getIDSeqPMTUFromOriginIPPacket4(payload, icmp4tr.udpBasePort)
@@ -259,7 +257,7 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 					}
 
 					udpLayer.Payload = req.Data
-					maxPayloadLen := 65535 - udpHeaderLen
+					maxPayloadLen := 65535 - udpHeaderLen - ipv4HeaderLen
 					if len(udpLayer.Payload) > maxPayloadLen {
 						udpLayer.Payload = udpLayer.Payload[:maxPayloadLen]
 						log.Printf("truncated udp payload to %d bytes", maxPayloadLen)
@@ -436,6 +434,10 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 						INetFamily: ipv6.Version,
 					}
 
+					if peerAddr, ok := peerAddr.(*net.IPAddr); ok {
+						replyObject.PeerRawIP = peerAddr
+					}
+
 					switch receiveMsg.Type {
 					case ipv6.ICMPTypeEchoReply:
 						echoReply, ok := receiveMsg.Body.(*icmp.Echo)
@@ -554,7 +556,7 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 		}
 
 		var wcm ipv6.ControlMessage
-
+		maxPayloadLen := 65535 - ipv6HeaderLen - udpHeaderLen
 		for {
 			select {
 			case <-ctx.Done():
@@ -563,9 +565,21 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 				if !ok {
 					return
 				}
+				var dst net.Addr = &req.Dst
 
 				var wb []byte
 				if icmp6tr.useUDP {
+					dst = &net.UDPAddr{
+						IP:   req.Dst.IP,
+						Port: icmp6tr.udpBasePort + req.Seq,
+					}
+
+					wb = req.Data
+					if len(wb) > maxPayloadLen {
+						wb = wb[:maxPayloadLen]
+						log.Printf("truncated udp payload to %d bytes", maxPayloadLen)
+					}
+				} else {
 					wm := icmp.Message{
 						Type: ipv6.ICMPTypeEchoRequest, Code: 0,
 						Body: &icmp.Echo{
@@ -582,8 +596,7 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 				}
 
 				wcm.HopLimit = req.TTL
-				dst := req.Dst
-				nbytes, err := ipv6PacketConn.WriteTo(wb, &wcm, &dst)
+				nbytes, err := ipv6PacketConn.WriteTo(wb, &wcm, dst)
 				if err != nil {
 					log.Fatalf("failed to write to connection: %v", err)
 				}

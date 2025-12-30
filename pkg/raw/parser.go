@@ -221,10 +221,9 @@ func extractPacketInfoFromOriginIP6(originIPPacketRaw []byte, baseDstPort int) (
 
 		identifier.Id = int(udpPacket.SrcPort)
 		identifier.Seq = int(udpPacket.DstPort) - baseDstPort
+		return identifier, nil
 	default:
 		err = fmt.Errorf("unknown ip6 next header: %d", ip6Packet.NextHeader)
 		return nil, err
 	}
-
-	return identifier, nil
 }
