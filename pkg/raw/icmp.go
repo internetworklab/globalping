@@ -110,6 +110,7 @@ type ICMP4Transceiver struct {
 	id             int
 	packetConn     net.PacketConn
 	ipv4PacketConn *ipv4.PacketConn
+	ipv4RawConn    *ipv4.RawConn
 
 	// User send requests to here, we retrieve the request,
 	// then we translate it to the wire format.
@@ -289,11 +290,22 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on packet:icmp: %v", err)
 	}
+
+	// Create a raw IP connection for sending UDP packets
+	rawConn, err := ipv4.NewRawConn(conn)
+	if err != nil {
+		return fmt.Errorf("failed to create raw connection: %v", err)
+	}
+
 	go func() {
 		defer conn.Close()
+		defer rawConn.Close()
 
 		icmp4tr.packetConn = conn
 		icmp4tr.ipv4PacketConn = ipv4.NewPacketConn(conn)
+		if err != nil {
+			log.Fatalf("failed to create raw connection: %v", err)
+		}
 
 		// Set the DF (Don't Fragment) bit to prevent routers from fragmenting packets
 		// If fragmentation is needed, routers will send ICMP errors instead
@@ -409,6 +421,34 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 							log.Fatalf("failed to serialize udp layer: %v", err)
 						}
 						wb = buf.Bytes()
+
+						// Append UDP payload data if present
+						if req.Data != nil && len(req.Data) > 0 {
+							wb = append(wb, req.Data...)
+							// Update UDP length field (bytes 4-5) to include header + payload
+							udpLen := uint16(len(wb))
+							wb[4] = byte(udpLen >> 8)
+							wb[5] = byte(udpLen & 0xff)
+						}
+
+						// Create IP header for raw UDP packet
+						ipHeader := &ipv4.Header{
+							Version:  4,
+							Len:      ipv4.HeaderLen,
+							TotalLen: ipv4.HeaderLen + len(wb),
+							TTL:      req.TTL,
+							Protocol: 17, // UDP IANA protocol number
+							Dst:      req.Dst.IP,
+							// Src will be filled by kernel based on routing
+							Src: net.IPv4zero,
+						}
+
+						// Send raw UDP packet using RawConn
+						err = icmp4tr.ipv4RawConn.WriteTo(ipHeader, wb, nil)
+						if err != nil {
+							log.Fatalf("failed to write raw UDP packet: %v", err)
+						}
+						markAsSentBytes(ctx, ipv4.HeaderLen+len(wb))
 					} else {
 						wm := icmp.Message{
 							Type: ipv4.ICMPTypeEcho, Code: 0,
@@ -424,18 +464,18 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 						if err != nil {
 							log.Fatalf("failed to marshal icmp message: %v", err)
 						}
-					}
 
-					if err := icmp4tr.ipv4PacketConn.SetTTL(req.TTL); err != nil {
-						log.Fatalf("failed to set TTL to %v: %v, req: %+v", req.TTL, err, req)
-					}
+						if err := icmp4tr.ipv4PacketConn.SetTTL(req.TTL); err != nil {
+							log.Fatalf("failed to set TTL to %v: %v, req: %+v", req.TTL, err, req)
+						}
 
-					dst := req.Dst
-					nBytes, err := icmp4tr.ipv4PacketConn.WriteTo(wb, nil, &dst)
-					if err != nil {
-						log.Fatalf("failed to write to connection: %v", err)
+						dst := req.Dst
+						nBytes, err := icmp4tr.ipv4PacketConn.WriteTo(wb, nil, &dst)
+						if err != nil {
+							log.Fatalf("failed to write to connection: %v", err)
+						}
+						markAsSentBytes(ctx, nBytes)
 					}
-					markAsSentBytes(ctx, nBytes)
 				}
 			}
 		}()
