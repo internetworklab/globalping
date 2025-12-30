@@ -29,6 +29,9 @@ type SimplePingRequest struct {
 
 	// Currently, only 'icmp' is supported, and 'udp' is planned to be supported in the future
 	L3PacketType *string
+
+	// Take effect only when L3PacketType is 'udp'
+	UDPDstPort *int
 }
 
 const ParamTargets = "targets"
@@ -45,6 +48,7 @@ const ParamDestination = "destination"
 const ParamResolveTimeoutMilliseconds = "resolveTimeoutMilliseconds"
 const ParamsIPInfoProviderName = "ipInfoProviderName"
 const ParamL3PacketType = "l3PacketType"
+const ParamUDPDstPort = "udpDstPort"
 
 const defaultTTL = 64
 
@@ -53,6 +57,14 @@ func ParseSimplePingRequest(r *http.Request) (*SimplePingRequest, error) {
 
 	if l3PacketType := r.URL.Query().Get(ParamL3PacketType); l3PacketType != "" {
 		result.L3PacketType = &l3PacketType
+	}
+
+	if udpDstPort := r.URL.Query().Get(ParamUDPDstPort); udpDstPort != "" {
+		udpDstPortInt, err := strconv.Atoi(udpDstPort)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse udp dst port: %v", err)
+		}
+		result.UDPDstPort = &udpDstPortInt
 	}
 
 	if ipInfoProviderName := r.URL.Query().Get(ParamsIPInfoProviderName); ipInfoProviderName != "" {
@@ -213,6 +225,9 @@ func (pr *SimplePingRequest) ToURLValues() url.Values {
 	}
 	if pr.L3PacketType != nil && *pr.L3PacketType != "" {
 		vals.Add(ParamL3PacketType, *pr.L3PacketType)
+	}
+	if pr.UDPDstPort != nil {
+		vals.Add(ParamUDPDstPort, strconv.Itoa(*pr.UDPDstPort))
 	}
 
 	return vals

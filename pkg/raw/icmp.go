@@ -2,6 +2,7 @@ package raw
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -142,6 +143,12 @@ type PacketIdentifier struct {
 	ICMPCode *int
 }
 
+func (pktId *PacketIdentifier) String() string {
+	// json bytes, jb for short.
+	jb, _ := json.Marshal(pktId)
+	return string(jb)
+}
+
 // with IP reply stripped, remains ICMPv4 PDU
 func getIDSeqPMTUFromOriginIPPacket4(rawICMPReply []byte, baseDstPort int) (identifier *PacketIdentifier, err error) {
 	identifier = new(PacketIdentifier)
@@ -181,7 +188,7 @@ func getIDSeqPMTUFromOriginIPPacket4(rawICMPReply []byte, baseDstPort int) (iden
 			identifier.PMTU = &pmtu
 		}
 
-		originPacket := gopacket.NewPacket(rawICMPReply, layers.LayerTypeIPv4, gopacket.Default)
+		originPacket := gopacket.NewPacket(icmpPacket.Payload, layers.LayerTypeIPv4, gopacket.Default)
 		if originPacket == nil {
 			err = fmt.Errorf("failed to create/decode origin ip packet")
 			return identifier, err
@@ -237,7 +244,7 @@ func getIDSeqPMTUFromOriginIPPacket4(rawICMPReply []byte, baseDstPort int) (iden
 			return identifier, err
 		}
 	} else if icmpPacket.TypeCode.Type() == layers.ICMPv4TypeTimeExceeded {
-		originPacket := gopacket.NewPacket(rawICMPReply, layers.LayerTypeIPv4, gopacket.Default)
+		originPacket := gopacket.NewPacket(icmpPacket.Payload, layers.LayerTypeIPv4, gopacket.Default)
 		if originPacket == nil {
 			err = fmt.Errorf("failed to create/decode origin ip packet")
 			return identifier, err
@@ -337,6 +344,7 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 							log.Printf("failed to parse ip packet, skipping: %v", err)
 							continue
 						}
+						log.Printf("pktIdentifier: %s", pktIdentifier.String())
 
 						if pktIdentifier.Id != icmp4tr.id {
 							log.Printf("packet id mismatch, ignoring: %v", pktIdentifier)
@@ -387,6 +395,8 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 						} else {
 							udpDstPort = defaultUDPBasePort + req.Seq
 						}
+						log.Printf("srcPort: %d", icmp4tr.id)
+						log.Printf("udpDstPort: %d", udpDstPort)
 
 						udpLayer := &layers.UDP{
 							SrcPort: layers.UDPPort(icmp4tr.id),
@@ -414,10 +424,10 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 						if err != nil {
 							log.Fatalf("failed to marshal icmp message: %v", err)
 						}
+					}
 
-						if err := icmp4tr.ipv4PacketConn.SetTTL(req.TTL); err != nil {
-							log.Fatalf("failed to set TTL to %v: %v, req: %+v", req.TTL, err, req)
-						}
+					if err := icmp4tr.ipv4PacketConn.SetTTL(req.TTL); err != nil {
+						log.Fatalf("failed to set TTL to %v: %v, req: %+v", req.TTL, err, req)
 					}
 
 					dst := req.Dst

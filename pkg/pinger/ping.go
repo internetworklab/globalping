@@ -87,7 +87,9 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		}
 		dst := *dstPtr
 
-		icmpId := rand.Intn(0x10000)
+		icmpId := 1024 + rand.Intn(0x10000-1024)
+		useUDP := sp.PingRequest.L3PacketType != nil && *sp.PingRequest.L3PacketType == "udp"
+		udpPort := sp.PingRequest.UDPDstPort
 
 		var transceiver pkgraw.GeneralICMPTransceiver
 		if dst.IP.To4() != nil {
@@ -216,9 +218,11 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					}
 
 					req := pkgraw.ICMPSendRequest{
-						Seq: numPktsSent + 1,
-						TTL: ttl,
-						Dst: dst,
+						Seq:        numPktsSent + 1,
+						TTL:        ttl,
+						Dst:        dst,
+						UseUDP:     useUDP,
+						UDPDstPort: udpPort,
 					}
 
 					if payloadManager != nil {
