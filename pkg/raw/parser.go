@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv6"
 )
 
 type PacketIdentifier struct {
@@ -162,6 +164,67 @@ func getIDSeqPMTUFromOriginIPPacket4(rawICMPReply []byte, baseDstPort int) (iden
 
 func extractPacketInfoFromOriginIP6(originIPPacketRaw []byte, baseDstPort int) (identifier *PacketIdentifier, err error) {
 	identifier = new(PacketIdentifier)
-	// todo: implement this
+
+	packet := gopacket.NewPacket(originIPPacketRaw, layers.LayerTypeIPv6, gopacket.Default)
+	if packet == nil {
+		err = fmt.Errorf("failed to create/decode origin ip6 packet")
+		return nil, err
+	}
+
+	ip6Layer := packet.Layer(layers.LayerTypeIPv6)
+	if ip6Layer == nil {
+		err = fmt.Errorf("failed to extract ip6 layer")
+		return nil, err
+	}
+
+	ip6Packet, ok := ip6Layer.(*layers.IPv6)
+	if !ok {
+		err = fmt.Errorf("failed to cast ip6 layer to ip6 packet")
+		return nil, err
+	}
+
+	identifier.IPProto = int(ip6Packet.NextHeader)
+	switch ip6Packet.NextHeader {
+	case layers.IPProtocolICMPv6:
+		originICMPMsg, err := icmp.ParseMessage(int(layers.IPProtocolICMPv6), ip6Packet.Payload)
+		if err != nil {
+			err = fmt.Errorf("failed to parse origin icmp message: %w", err)
+			return nil, err
+		}
+
+		if originICMPMsg.Type != ipv6.ICMPTypeEchoReply {
+			err = fmt.Errorf("unexpected icmpv6 type: %v", originICMPMsg.Type)
+			return nil, err
+		}
+
+		originICMPEchoMsg, ok := originICMPMsg.Body.(*icmp.Echo)
+		if !ok {
+			return nil, fmt.Errorf("failed to cast origin icmp message body to *icmp.Echo")
+		}
+
+		identifier.Id = int(originICMPEchoMsg.ID)
+		identifier.Seq = int(originICMPEchoMsg.Seq)
+
+		return identifier, nil
+	case layers.IPProtocolUDP:
+		udpLayer := packet.Layer(layers.LayerTypeUDP)
+		if udpLayer == nil {
+			err = fmt.Errorf("failed to extract udp layer from origin ip6 packet")
+			return nil, err
+		}
+
+		udpPacket, ok := udpLayer.(*layers.UDP)
+		if !ok {
+			err = fmt.Errorf("failed to cast udp layer to udp packet")
+			return nil, err
+		}
+
+		identifier.Id = int(udpPacket.SrcPort)
+		identifier.Seq = int(udpPacket.DstPort) - baseDstPort
+	default:
+		err = fmt.Errorf("unknown ip6 next header: %d", ip6Packet.NextHeader)
+		return nil, err
+	}
+
 	return identifier, nil
 }
