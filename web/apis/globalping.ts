@@ -7,7 +7,9 @@ function getApiEndpoint(): string {
   );
 }
 
-export async function getCurrentPingers(): Promise<string[]> {
+export async function getCurrentPingers(
+  extraLabels?: Record<string, string>
+): Promise<string[]> {
   return fetch(`${getApiEndpoint()}/conns`)
     .then((res) => res.json())
     .then((data) => {
@@ -16,6 +18,24 @@ export async function getCurrentPingers(): Promise<string[]> {
         for (const key in data) {
           const node = data[key];
           if (typeof node === "object") {
+            if (!node["attributes"] || typeof node["attributes"] !== "object") {
+              continue;
+            }
+            if (extraLabels) {
+              let allMatch = true;
+              for (const key in extraLabels) {
+                if (
+                  !node["attributes"][key] ||
+                  node["attributes"][key] !== extraLabels[key]
+                ) {
+                  allMatch = false;
+                  break;
+                }
+              }
+              if (!allMatch) {
+                continue;
+              }
+            }
             if (
               node["attributes"] &&
               node["attributes"]["NodeName"] &&

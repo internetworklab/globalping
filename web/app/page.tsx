@@ -248,7 +248,9 @@ export default function Home() {
                   .filter((s) => s.length > 0)}
                 onChange={(value) => setSourcesInput(value.join(","))}
                 getOptions={() => {
-                  return getCurrentPingers();
+                  return getCurrentPingers(
+                    !!pendingTask.useUDP ? { SupportUDP: "true" } : undefined
+                  );
                   // return new Promise((res) => {
                   //   window.setTimeout(() => res(fakeSources), 2000);
                   // });
