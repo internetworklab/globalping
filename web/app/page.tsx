@@ -175,8 +175,6 @@ export default function Home() {
                   setPendingTask((prev) => ({
                     ...prev,
                     type: e.target.value as "ping" | "traceroute",
-                    useUDP:
-                      e.target.value !== "traceroute" ? false : prev.useUDP,
                   }))
                 }
                 row
@@ -224,7 +222,6 @@ export default function Home() {
                   label="Prefer V6"
                 />
                 <FormControlLabel
-                  disabled={pendingTask.type !== "traceroute"}
                   control={
                     <Checkbox
                       checked={!!pendingTask.useUDP}

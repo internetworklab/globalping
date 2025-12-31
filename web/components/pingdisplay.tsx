@@ -52,7 +52,7 @@ export function PingResultDisplay(props: {
   onDeleted: () => void;
 }) {
   const { pendingTask, onDeleted } = props;
-  const { sources, targets, preferV4, preferV6 } = pendingTask;
+  const { sources, targets, preferV4, preferV6, useUDP } = pendingTask;
 
   const [latencyMap, setLatencyMap] = useState<
     Record<string, Record<string, number>>
@@ -73,6 +73,7 @@ export function PingResultDisplay(props: {
       resolver: "172.20.0.53:53",
       preferV4: preferV4,
       preferV6: preferV6,
+      l3PacketType: !!useUDP ? "udp" : "icmp",
     });
     const reader = resultStream.getReader();
     const readNext = (props: {

@@ -85,14 +85,6 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if pingRequest.L3PacketType != nil && *pingRequest.L3PacketType == "udp" {
-		ttlGenerator := pingRequest.TTL
-		if _, ok := ttlGenerator.(*pkgpinger.AutoTTL); !ok {
-			json.NewEncoder(w).Encode(pkgutils.ErrorResponse{Error: "udp mode only supports auto ttl generator"})
-			return
-		}
-	}
-
 	ctx := r.Context()
 
 	pingReqJSB, _ := json.Marshal(pingRequest)
