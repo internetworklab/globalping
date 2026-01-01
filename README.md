@@ -1,20 +1,52 @@
 # My GlobalPing
 
-This is my own little toy project, and especially, it has nothing to do with the more famous and official [globalping.io](https://globalping.io). I wrote this code mainly for personal interest. To me, it's fun to experiment with networking technologies like IP, ICMP or BGP. It's quite meaningful to deal with raw ICMP/IP packets and that is exactly the practice for which I built this project for.
+My GlobalPing is not [globalping](https://globalping.io), nor does My GlobalPing does exactly like that.
 
-## So, What is My GlobalPing then?
-
-Just as My Traceroute (MTR) combines ping and traceroute features and provides a CLI user interface for continuously displaying network conditions refreshed in real-time, so does My GlobalPing. My GlobalPing also combines ping and traceroute, and provides a web-based UI for continuously displaying network path tracing refreshed in real-time.
-
-In addition, My GlobalPing supports the Internet (also referred as 'Clearnet', in DN42) as well as DN42, at no hassle. It enables you to have a clear picture of how packets traverse the BGP forwarding path. It's a handy learning tool to help you understand networking and routing better.
-
-You can quickly get hands-on with it to see how it works by visiting my own deployed instance of My GlobalPing at the top right of the page, or just click [here](https://globalping.netneighbor.me).
+My GlobalPing is a web-based ping & traceroute project, providing easy to use interface, helping users find out an intuitive view about how the IP packets has been forwarded through.
 
 ## Features
 
 - Web-based UI for displaying real-time refreshing Ping or Traceroute results, with multiple origin nodes and multiple targets simultaneously.
 - Basic rDNS and IPInfoLite-like results for both Clearnet and DN42, such as country, ASN, and AS Name.
 - API-first design with RESTful API endpoints and plain-text JSON line stream outputs. Components of our system can be debugged with simple HTTP clients such as curl.
+
+## Build
+
+If you are in a hurry, just go straight to try our deployed instance at [here](https://globalping.netneighbor.me), or [here](http://ping.dn42)(DN42). Which is ready to use, and doesn't require you to build or install anything.
+
+Make sure golang of newer version is already installed, if not, go visit [go.dev/doc/install](https://go.dev/doc/install) to download and un-tar a tarball, and make sure that $GOPATH/bin, and /usr/local/go/bin are in the $PATH.
+
+Recursive clone the repo tree, cd into the project root, then
+
+```shell
+go build -o bin/globalping ./cmd/globalping
+```
+
+Now the binary `bin/globalping` can serve as an agent or a hub depending on the CLI arguments provided.
+
+## Try or Debugging
+
+After built the binary, launch a testing purpose localhost agent:
+
+```shell
+scripts/launch_example_agent.sh
+```
+
+It will listen on 127.0.0.1:8084 for plaintext HTTP requests, you can call the API with, for example:
+
+```shell
+curl --url-query destination=1.1.1.1 --url-query count=3 localhost:8084/simpleping
+```
+
+Doing so will send 3 icmp echo request packets to the destination specified, 1.1.1.1, and the modeled response will be stream to stdout in realtime in JSON line format.
+
+It's better to use the web UI directly, since it has much richer feature set and easier to use UI.
+
+## Screenshot
+
+Currently the looking is still rugged, but we are actively iterating it.
+
+![looks](docs/screenshot.png)
 
 ## API Design
 
