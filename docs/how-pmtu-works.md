@@ -146,6 +146,8 @@ ip r get 192.168.7.2
     cache expires 381sec mtu 1350
 ```
 
+Once you decided to ajust the MTU setting of some interface, **make sure all interface MTUs in the point-to-point link (or in the same LAN) are strictly aligned**, in our example, if you changed the MTU of v-ns1 to 1350, then you also have to change the MTU of eth1 in ns2 to 1350 so that they align.
+
 ## When PMTU Doesn't Work
 
 There are many events that can cause normal PMTU discovery be failed, notably, some misconfigured firwalls, routers or gateways might drop ICMP messages for reasons we do or do not know, hence breaks PMTU discovery.
