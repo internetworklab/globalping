@@ -1,6 +1,6 @@
 # How PMTU Works
 
-MTU is the maximum size of PDU of layer 3 packets (mainly IP packets) that a interface can still happily wave through. Most ubiquitously, an Ethernet interface has a standard MTU of 1500 (bytes), meaning that it allows an IP packet of size 1500 be pass through while an IP packet with size exceeded 1500 (say, 1550) does not.
+MTU is the maximum size of PDU of layer 3 packets (mainly IP packets) that an interface can still happily wave through. Most ubiquitously, an Ethernet interface has a standard MTU of 1500 (bytes), meaning that it allows an IP packet of size 1500 be pass through while an IP packet with size exceeded 1500 (say, 1550) does not.
 
 Most of the time MTU shall not trouble us, because standards, autoconfigurations, iptables stuff and firmware of the ISP residential gateway did some works for us underneath.
 
