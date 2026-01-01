@@ -40,7 +40,7 @@ curl --url-query destination=1.1.1.1 --url-query count=3 localhost:8084/simplepi
 
 Doing so will send 3 icmp echo request packets to the destination specified, 1.1.1.1, and the modeled response will be stream to stdout in realtime in JSON line format.
 
-It's better to use the web UI directly, since it has much richer feature set and easier to use UI.
+It's better to use the web UI directly, since it has much richer feature set as well as easier to use UI.
 
 ## Screenshot
 
