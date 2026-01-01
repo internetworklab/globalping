@@ -143,10 +143,6 @@ Once the Path MTU is probed, the kernel might cache the PMTU result for you, you
 ip r get 192.168.7.2
 192.168.7.2 via 192.168.5.2 dev v-ns1 src 192.168.5.1 uid 0
     cache expires 381sec mtu 1350
-
-## maybe proceed with
-# ip l set v-ns1 mtu 1350
-## so that it can reach the final target 192.168.7.2 at no hassle.
 ```
 
 ## Clean Up
