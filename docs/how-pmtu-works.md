@@ -1,5 +1,15 @@
 # How PMTU Works
 
+MTU is the maximum size of PDU of layer 3 packets (mainly IP packets) that a interface can still happily wave through. Most ubiquitously, an Ethernet interface has a standard MTU of 1500 (bytes), meaning that it allows an IP packet of size 1500 be pass through while an IP packet with size exceeded 1500 (say, 1550) does not.
+
+Most of the time MTU shall not trouble us, because standards, autoconfigurations, iptables stuff and firmware of the ISP residential gateway did some works for us underneath.
+
+However, things quickly become different when tunnels (or extra layer of encapsulation) are introduced, especially when playing with virtual links or custom routings. A Tunnel outgoing interface prepends some encapsulation (like tags, labels, headers in their own) in front of the original packet to conceal the address header fields to create a virutalized and free addressing space (so that we can play with some custom routing stuffs), the encapsulation itself also cost some overheads, so the simple rule of 1500 MTU no longer works.
+
+Working out (also knows how to working out) the correct path is important, because an interface configured with in-correct MTU might siliently drop packets, causing import messages be lost. MTU mismatch or misconfiguration might also cause many BGP issues, such as flapping or ghost routes.
+
+In this article we gonna mimics the scenario where some interfaces has non-standard MTU configured, and we will see how to probing out the correct MTU step by step that can make the packet pass through all the interfaces along the path with no problem.
+
 ![network topology](pmtu-illustration.png)
 
 Create the above lab environment using following commands, we use ns1, ns2, and ns3 for demonstrating purpose and it will delete them and re-create them, proceed with cautious:
