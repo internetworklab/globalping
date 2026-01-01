@@ -198,7 +198,7 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 
 			for reply := range transceiver.GetReceiver() {
 				if err := tracker.MarkReceived(reply.Seq, reply); err != nil {
-					log.Printf("failed to mark received: %v", err)
+					log.Printf("In ICMPReceiving goroutine for %s, failed to mark received: %v", dst.String(), err)
 					return
 				}
 				counterStore.NumPktsReceived.With(commonLabels).Add(1.0)
@@ -240,16 +240,21 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 						return
 					}
 
-					senderCh <- req
+					// MarkSent first, then actually send it.
+					// otherwise, if send it before marking sent, and if the reply is received too early,
+					// there would be a race condition (the reply packet can't find the corresponding sent entry)
 					if err := tracker.MarkSent(req.Seq, req.TTL); err != nil {
-						log.Printf("failed to mark sent: %v", err)
+						log.Printf("In ICMPSending goroutine for %s, failed to mark sent: %v", dst.String(), err)
 						return
 					}
+					senderCh <- req
+
 					counterStore.NumPktsSent.With(commonLabels).Add(1.0)
 
 					numPktsSent++
 					if pingRequest.TotalPkts != nil {
 						if numPktsSent >= *pingRequest.TotalPkts {
+							log.Printf("In ICMPSending goroutine for %s, no more packets to send: %d", dst.String(), *pingRequest.TotalPkts)
 							return
 						}
 					}
