@@ -348,9 +348,8 @@ export function TracerouteResultDisplay(props: {
   const canvasW = 360000;
   const canvasH = 200000;
 
-  const { canvasSvgRef } = useCanvasSizing(canvasW, canvasH);
-
   const [showMap, setShowMap] = useState<boolean>(false);
+  const { canvasSvgRef } = useCanvasSizing(canvasW, canvasH, showMap);
 
   return (
     <Card>

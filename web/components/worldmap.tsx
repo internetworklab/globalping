@@ -167,7 +167,11 @@ function getViewBox(svg: SVGSVGElement): number[] {
   return [0, 0, 0, 0];
 }
 
-export function useCanvasSizing(canvasW: number, canvasH: number) {
+export function useCanvasSizing(
+  canvasW: number,
+  canvasH: number,
+  expanded: boolean
+) {
   const canvasSvgRef = useRef<SVGSVGElement>(null);
   useEffect(() => {
     if (canvasSvgRef.current) {
@@ -186,7 +190,7 @@ export function useCanvasSizing(canvasW: number, canvasH: number) {
         setViewBox(svg, [offsetX, offsetY, projXLen, projYLen]);
       }
     }
-  }, [canvasW, canvasH, canvasSvgRef.current]);
+  }, [canvasW, canvasH, canvasSvgRef.current, expanded]);
 
   useEffect(() => {
     const svg = canvasSvgRef.current;
@@ -250,7 +254,7 @@ export function useCanvasSizing(canvasW: number, canvasH: number) {
       window.removeEventListener("wheel", onWheel);
       console.log("[dbg] removed wheel listener");
     };
-  }, [canvasSvgRef.current]);
+  }, [canvasSvgRef.current, expanded]);
   return { canvasSvgRef };
 }
 
