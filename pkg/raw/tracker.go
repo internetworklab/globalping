@@ -434,7 +434,9 @@ func (it *ICMPTracker) ForgetAllAndClose() error {
 		it.closed = true
 
 		for _, ent := range it.store {
-			ent.Timer.Stop()
+			if ent != nil && ent.Timer != nil {
+				ent.Timer.Stop()
+			}
 		}
 		return nil
 	}

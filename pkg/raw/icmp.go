@@ -183,7 +183,6 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 
 			icmp4tr.ReceiveC <- replyObject
 			markAsReceivedBytes(ctx, nBytes)
-			break
 		}
 	}()
 
@@ -497,7 +496,6 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 
 			icmp6tr.ReceiveC <- replyObject
 			markAsReceivedBytes(ctx, nBytes)
-			break
 		}
 	}()
 

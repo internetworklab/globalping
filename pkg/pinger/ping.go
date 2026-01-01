@@ -126,10 +126,14 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		type SendControl struct {
 			PMTU *int
 			TTL  int
+			Seq  int
 		}
 
+		var numPktsSent *int = new(int)
+		*numPktsSent = 0
 		ctrlSignals := make(chan SendControl, 1)
 		ctrlSignals <- SendControl{
+			Seq:  *numPktsSent + 1,
 			PMTU: nil,
 			TTL:  pingRequest.TTL.GetNext(),
 		}
@@ -176,6 +180,7 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					}
 
 					outputEVChan <- PingEvent{Data: wrappedEV}
+					*numPktsSent++
 
 					if pingRequest.TotalPkts != nil && tracker.GetUnAcked() == 0 && tracker.GetAckedSeq() == *pingRequest.TotalPkts {
 						// the SEQ of reply packet is un-reliable, since the order of reply packets is not guaranteed.
@@ -183,7 +188,9 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 						return
 					}
 
+					<-time.After(time.Duration(pingRequest.IntvMilliseconds) * time.Millisecond)
 					ctrlSignals <- SendControl{
+						Seq:  *numPktsSent + 1,
 						PMTU: wrappedEV.GetPMTU(),
 						TTL:  pingRequest.TTL.GetNext(),
 					}
@@ -194,7 +201,6 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		go func() {
 			log.Printf("ICMPReceiving goroutine for %s is started", dst.String())
 			defer log.Printf("ICMPReceiving goroutine for %s is exitting", dst.String())
-			defer tracker.ForgetAllAndClose()
 
 			for reply := range transceiver.GetReceiver() {
 				if err := tracker.MarkReceived(reply.Seq, reply); err != nil {
@@ -208,25 +214,26 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		go func() {
 			log.Printf("ICMPSending goroutine for %s is started", dst.String())
 			defer log.Printf("ICMPSending goroutine for %s is exitting", dst.String())
-			defer transceiver.Close()
 
-			numPktsSent := 0
 			for {
 				select {
 				case <-ctx.Done():
 					log.Printf("In ICMPSending goroutine for %s, got context done", dst.String())
+					transceiver.Close()
 					return
 				case err := <-transceiverErrCh:
 					log.Printf("In ICMPSending goroutine for %s, got transceiver error: %v", dst.String(), err)
+					transceiver.Close()
+					tracker.ForgetAllAndClose()
 					return
 				case ctrlSignal, ok := <-ctrlSignals:
 					if !ok {
-						log.Printf("In ICMPSending goroutine for %s, no more TTL values will be generated", dst.String())
+						log.Printf("In ICMPSending goroutine for %s, no more sending requests will be generated", dst.String())
 						return
 					}
 
 					req := pkgraw.ICMPSendRequest{
-						Seq:  numPktsSent + 1,
+						Seq:  ctrlSignal.Seq,
 						TTL:  ctrlSignal.TTL,
 						Dst:  dst,
 						Data: payload,
@@ -250,15 +257,6 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					senderCh <- req
 
 					counterStore.NumPktsSent.With(commonLabels).Add(1.0)
-
-					numPktsSent++
-					if pingRequest.TotalPkts != nil {
-						if numPktsSent >= *pingRequest.TotalPkts {
-							log.Printf("In ICMPSending goroutine for %s, no more packets to send: %d", dst.String(), *pingRequest.TotalPkts)
-							return
-						}
-					}
-					<-time.After(time.Duration(pingRequest.IntvMilliseconds) * time.Millisecond)
 				}
 			}
 		}()
