@@ -129,7 +129,7 @@ export default function Home() {
                   flexWrap: "wrap",
                 }}
               >
-                <Typography variant="h6">GlobalPing</Typography>
+                <Typography variant="h6">MyGlobalping</Typography>
               </Box>
               <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
                 {repoAddr !== "" && (

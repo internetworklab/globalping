@@ -1,8 +1,8 @@
-# My GlobalPing
+# MyGlobalping
 
-My GlobalPing is not [globalping](https://globalping.io), nor does My GlobalPing does exactly like that.
+MyGlobalping is not [globalping.io](https://globalping.io) (which is more famous and official), nor does it has anything to do with it.
 
-My GlobalPing is a web-based ping & traceroute project, providing easy to use interface, helping users find out an intuitive view about how the IP packets has been forwarded through.
+MyGlobalping is a web-based ping & traceroute project, providing easy to use interface, helping users to have an intuitive view about miscellaneous network informations like how the IP packets get routed through or how well is the round-trip latency.
 
 ## Features
 
@@ -16,7 +16,7 @@ If you are in a hurry, just go straight to try our deployed instance at [here](h
 
 Make sure golang of newer version is already installed, if not, go visit [go.dev/doc/install](https://go.dev/doc/install) to download and un-tar a tarball, and make sure that $GOPATH/bin, and /usr/local/go/bin are in the $PATH.
 
-Recursive clone the repo tree, cd into the project root, then
+Recursively clone the repo, cd into the project root, then
 
 ```shell
 go build -o bin/globalping ./cmd/globalping
@@ -26,19 +26,19 @@ Now the binary `bin/globalping` can serve as an agent or a hub depending on the 
 
 ## Try or Debugging
 
-After built the binary, launch a testing purpose localhost agent:
+After the binary is built, to see how it goes, try launch a testing purpose localhost agent:
 
 ```shell
 scripts/launch_example_agent.sh
 ```
 
-It will listen on 127.0.0.1:8084 for plaintext HTTP requests, you can call the API with, for example:
+It binds on 127.0.0.1:8084, listens for plaintext HTTP requests, you can call the API with whaever HTTP client you like, for example:
 
 ```shell
 curl --url-query destination=1.1.1.1 --url-query count=3 localhost:8084/simpleping
 ```
 
-Doing so will send 3 icmp echo request packets to the destination specified, 1.1.1.1, and the modeled response will be stream to stdout in realtime in JSON line format.
+Doing so cause it send out 3 icmp echo request packets to the destination specified, 1.1.1.1, and the response will be stream to stdout in realtime in JSON line format.
 
 It's better to use the web UI directly, since it has much richer feature set as well as easier to use UI.
 
@@ -64,6 +64,6 @@ The APIs of the system are not intended to be called directly by end users; only
 
 ## Clustering
 
-My GlobalPing system is designed to be distributed. There is a hub and many agents. The hub and agents communicate through mTLS-protected channels. An agent doesn't talk to other agents but only to the hub, and the hub only talks to agents. There is only one hub in a cluster.
+MyGlobalping system is designed to be distributed. There is a hub and many agents. The hub and agents communicate through mTLS-protected channels. An agent doesn't talk to other agents but only to the hub, and the hub only talks to agents. There is only one hub in a cluster.
 
 Take a look at [docs/how-to-join.md](docs/how-to-join.md) for how to join a new agent to a cluster. It's no more complicated than just advertising itself to the hub.
