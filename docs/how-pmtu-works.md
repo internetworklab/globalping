@@ -123,7 +123,7 @@ rtt min/avg/max/mdev = 0.171/0.171/0.171/0.000 ms
 With command:
 
 ```shell
-traceroute --mtu 192.168.7.2   
+traceroute --mtu 192.168.7.2
 ## or tracepath -n 192.168.7.2  # depending on what is installed
 ```
 
@@ -145,6 +145,46 @@ ip r get 192.168.7.2
 192.168.7.2 via 192.168.5.2 dev v-ns1 src 192.168.5.1 uid 0
     cache expires 381sec mtu 1350
 ```
+
+## When PMTU Doesn't Work
+
+There are many events that can cause normal PMTU discovery be failed, notably, some misconfigured firwalls, routers or gateways might drop ICMP messages for reasons we do or do not know, hence breaks PMTU discovery.
+
+Beside that, in order to make the entire network functioning properly, for each link, **the MTU must match on both ends**, otherwise, normal PMTU probing might not works as expected. Look at the following topology diagram:
+
+![mtu does not match](pmtu-doesnt-work.png)
+
+As we saw, the MTU of v-ns3 interface in ns2 has been intentionally adjusted to 1500, which is appearently higher that the MTU of its interface that connects ns1, and mismatch the MTU of another end of the point-to-point link which is 1350.
+
+Let's take a look at traceroute to see if it's still functioning properly:
+
+```
+traceroute --mtu 192.168.7.2
+traceroute to 192.168.7.2 (192.168.7.2), 30 hops max, 65000 byte packets
+ 1  192.168.5.2 (192.168.5.2)  0.077 ms F=1500  0.070 ms  0.017 ms
+ 2  192.168.6.2 (192.168.6.2)  0.036 ms F=1370  0.142 ms  0.054 ms
+ 3  * * *
+ 4  * * *
+ 5  * * *
+ 6  * *^C
+```
+
+Well, the traceroute just stucks here. Clearly, MTU mismatch is likely causing automatic PMTU discovery be broken.
+
+In our case, this is because that the ns2 router thinks that, MTU 1370 is already small enough to let the packet get pass through v-ns3 (which has a MTU of 1500) to reach the nexthop, everything seems alright because 1370 < 1500, except that ns2 has no knowledge of the MTU of the peer side and never knows that 1500 MTU of v-ns3 is actually wrong (because mismatch).
+
+To repair this, re-pair the mismatch MTU setting of v-ns3 with it's peer (eth1 in ns3, MTU 1350)
+
+```shell
+ip -n ns2 l set v-ns3 mtu 1350
+traceroute --mtu 192.168.7.2
+traceroute to 192.168.7.2 (192.168.7.2), 30 hops max, 65000 byte packets
+ 1  192.168.5.2 (192.168.5.2)  0.092 ms F=1500  0.076 ms  0.022 ms
+ 2  192.168.6.2 (192.168.6.2)  0.040 ms F=1370  0.109 ms  0.023 ms
+ 3  192.168.7.2 (192.168.7.2)  0.037 ms F=1350  0.108 ms  0.028 ms
+```
+
+Since the MTUs are now matched, automatic PMTU discovery works again.
 
 ## Clean Up
 
