@@ -369,3 +369,7 @@ func (it *ICMPTracker) MarkReceived(seq int, raw ICMPReceiveReply) error {
 	}
 	return nil
 }
+
+func (it *ICMPTracker) FlushAndClose() {
+	// todo
+}

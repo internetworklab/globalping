@@ -182,24 +182,15 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 
 		}()
 
-		receivingCtx, cancelReceiving := context.WithCancel(context.Background())
-		defer cancelReceiving()
 
 		go func() {
 			log.Printf("ICMPReceiving goroutine for %s is started", dst.String())
 			defer log.Printf("ICMPReceiving goroutine for %s is exitting", dst.String())
+			defer tracker.FlushAndClose()
 
-			receiverCh := transceiver.GetReceiver()
-			for {
-				subCh := make(chan pkgraw.ICMPReceiveReply)
-				select {
-				case <-receivingCtx.Done():
-					return
-				case receiverCh <- subCh:
-					reply := <-subCh
-					tracker.MarkReceived(reply.Seq, reply)
-					counterStore.NumPktsReceived.With(commonLabels).Add(1.0)
-				}
+			for reply := range transceiver.GetReceiver() {
+				tracker.MarkReceived(reply.Seq, reply)
+				counterStore.NumPktsReceived.With(commonLabels).Add(1.0)
 			}
 		}()
 
@@ -207,7 +198,7 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			log.Printf("ICMPSending goroutine for %s is started", dst.String())
 			defer log.Printf("ICMPSending goroutine for %s is exitting", dst.String())
 
-			senderCh := transceiver.GetSender()
+			
 			numPktsSent := 0
 			for {
 				select {
@@ -231,6 +222,13 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 
 					if payloadManager != nil {
 						req.Data = payloadManager.GetPayload()
+					}
+
+					senderCh, ok := <- transceiver.GetSender()
+					if !ok {
+						// the transceiver no longer accepts new requests
+						log.Printf("In ICMPSending goroutine for %s, transceiver no longer accepts new requests", dst.String())
+						return
 					}
 
 					senderCh <- req

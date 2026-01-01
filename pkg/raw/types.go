@@ -1,8 +1,8 @@
 package raw
 
 type GeneralICMPTransceiver interface {
-	GetSender() chan<- ICMPSendRequest
-	GetReceiver() chan<- chan ICMPReceiveReply
+	GetSender() <- chan chan ICMPSendRequest
+	GetReceiver() <- chan ICMPReceiveReply
 }
 
 const ipv4HeaderLen int = 20
