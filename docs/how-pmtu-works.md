@@ -154,7 +154,7 @@ Beside that, in order to make the entire network functioning properly, for each 
 
 ![mtu does not match](pmtu-doesnt-work.png)
 
-As we saw, the MTU of v-ns3 interface in ns2 has been intentionally adjusted to 1500, which is appearently higher that the MTU of its interface that connects ns1, and mismatch the MTU of another end of the point-to-point link which is 1350.
+As we saw, the MTU of v-ns3 interface in ns2 has been intentionally adjusted to 1500, which is appearently higher that the MTU of its interface that connects ns1, and most importantly, mis-aligned with the MTU of another end of the point-to-point link which is 1350.
 
 Let's take a look at traceroute to see if it's still functioning properly:
 
