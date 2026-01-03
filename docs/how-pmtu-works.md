@@ -191,7 +191,7 @@ traceroute to 192.168.7.2 (192.168.7.2), 30 hops max, 65000 byte packets
 
 ### Kernel's PMTU Cache
 
-Once the Path MTU is probed, the kernel might cache the PMTU result for you, so that your node don't have to repeat the process described above again and again when it tries to communicate with some target that has smaller interface MTU then its:
+Once the Path MTU is probed, the kernel might cache the PMTU result for you, so that your node don't have to repeat the process described above again and again when it tries to communicate with some target that has smaller interface MTU than its:
 
 ```
 ip r get 192.168.7.2
@@ -243,7 +243,7 @@ traceroute to 192.168.7.2 (192.168.7.2), 30 hops max, 65000 byte packets
 
 Since the MTUs are now lined up, automatic PMTU discovery works again.
 
-The way to probe the path MTU we described in this article, is sometimes also known as _the classic PMTU discovery_, and there's also a RFC for that ([rfc1191](https://datatracker.ietf.org/doc/html/rfc1191)). So now we can find that, the classic PMTU discovery does not always works, it's not always reliable, and it should be regarded as some best-effort approach. There's a much more robust way of doing PMTU discovery called _packetized PMTU_ or "Packetization Layer Path MTU Discovery" as describe in [rfc4821](https://datatracker.ietf.org/doc/html/rfc4821), it's also more sophisticated and we might have a look on that in the future.
+The way to probe the path MTU we described in this article, is sometimes also known as _the classic PMTU discovery_, and there's also a RFC for that ([rfc1191](https://datatracker.ietf.org/doc/html/rfc1191)). So now we can find that, the classic PMTU discovery does not always works, it's not always reliable, and it should be regarded as some best-effort approach. There's a much more robust way of doing PMTU discovery called _packetized PMTU_ or "Packetization Layer Path MTU Discovery" as described in [rfc4821](https://datatracker.ietf.org/doc/html/rfc4821), it's also more sophisticated and we might have a look on that in the future.
 
 ## Clean Up
 
