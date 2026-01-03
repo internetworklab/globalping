@@ -259,9 +259,15 @@ export default function Home() {
                   .filter((s) => s.length > 0)}
                 onChange={(value) => setSourcesInput(value.join(","))}
                 getOptions={() => {
-                  return getCurrentPingers(
-                    !!pendingTask.useUDP ? { SupportUDP: "true" } : undefined
-                  );
+                  let filter: Record<string, string> | undefined = undefined;
+                  if (!!pendingTask.useUDP) {
+                    filter = { ...(filter || {}), SupportUDP: "true" };
+                  }
+                  if (!!pendingTask.pmtu) {
+                    filter = { ...(filter || {}), SupportPMTU: "true" };
+                  }
+
+                  return getCurrentPingers(filter);
                   // return new Promise((res) => {
                   //   window.setTimeout(() => res(fakeSources), 2000);
                   // });
