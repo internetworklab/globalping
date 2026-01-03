@@ -517,18 +517,17 @@ export function TracerouteResultDisplay(props: {
                   <TableCell>{hop}</TableCell>
                   <TableCell>
                     {entry.peers.length > 0 ? (
-                      <Box
-                        sx={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(4, auto)",
-                          alignItems: "center",
-                          justifyItems: "flex-start",
-                          justifyContent: "start",
-                          columnGap: 2,
-                        }}
-                      >
+                      <Box>
                         {entry.peers.map((peer, idx) => (
-                          <Fragment key={idx}>
+                          <Box
+                            sx={{
+                              display: "flex",
+                              gap: 1,
+                              alignItems: "center",
+                              flexWrap: "wrap",
+                            }}
+                            key={idx}
+                          >
                             <IPDisp rdns={peer.ip.rdns} ip={peer.ip.ip} />
                             {!!peer.asn && <Box>{peer.asn}</Box>}
                             {!!peer.location && <Box>{peer.location}</Box>}
@@ -536,7 +535,7 @@ export function TracerouteResultDisplay(props: {
                             {!!entry.pmtu?.[peer.ip.ip] && (
                               <Box>PMTU={entry.pmtu[peer.ip.ip]}</Box>
                             )}
-                          </Fragment>
+                          </Box>
                         ))}
                       </Box>
                     ) : (

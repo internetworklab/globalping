@@ -175,6 +175,7 @@ export default function Home() {
                   setPendingTask((prev) => ({
                     ...prev,
                     type: e.target.value as "ping" | "traceroute",
+                    pmtu: e.target.value === "ping" ? false : prev.pmtu,
                   }))
                 }
                 row
@@ -238,7 +239,10 @@ export default function Home() {
                 <FormControlLabel
                   control={
                     <Checkbox
-                      checked={!!pendingTask.pmtu}
+                      disabled={pendingTask.type !== "traceroute"}
+                      checked={
+                        pendingTask.type === "traceroute" && !!pendingTask.pmtu
+                      }
                       onChange={(_, ckd) => {
                         setPendingTask((prev) => ({
                           ...prev,
