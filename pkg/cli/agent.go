@@ -69,6 +69,7 @@ type AgentCmd struct {
 	MetricsPath          string `help:"Path to expose prometheus metrics" default:"/metrics"`
 
 	SupportUDP bool `help:"Declare supportness for UDP traceroute" default:"false"`
+	SupportPMTU bool `help:"Declare supportness for PMTU discovery" default:"false"`
 }
 
 type PingHandler struct {
@@ -359,6 +360,10 @@ func (agentCmd *AgentCmd) Run() error {
 
 		if agentCmd.SupportUDP {
 			attributes[pkgnodereg.AttributeKeySupportUDP] = "true"
+		}
+
+		if agentCmd.SupportPMTU {
+			attributes[pkgnodereg.AttributeKeySupportPMTU] = "true"
 		}
 
 		agent := pkgnodereg.NodeRegistrationAgent{

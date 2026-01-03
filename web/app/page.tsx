@@ -235,6 +235,20 @@ export default function Home() {
                   }
                   label="Use UDP"
                 />
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={!!pendingTask.pmtu}
+                      onChange={(_, ckd) => {
+                        setPendingTask((prev) => ({
+                          ...prev,
+                          pmtu: !!ckd,
+                        }));
+                      }}
+                    />
+                  }
+                  label="PMTU"
+                />
               </FormGroup>
             </Box>
             <Box sx={{ marginTop: 2 }}>

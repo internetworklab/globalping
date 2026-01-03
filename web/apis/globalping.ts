@@ -86,6 +86,8 @@ export type PingSample = {
   peerExactLocation?: ExactLocation;
 
   lastHop?: boolean;
+
+  pmtu?: number;
 };
 
 export function generateFakePingSampleStream(
@@ -155,6 +157,8 @@ type RawPingEventICMPReply = {
   TTL?: number;
 
   LastHop?: boolean;
+
+  SetMTUTo?: number;
 };
 
 type RawPingEventData = {
@@ -302,6 +306,7 @@ function pingSampleFromEvent(event: RawPingEvent): PingSample | undefined {
         : undefined,
     lastHop:
       raws && raws.length > 0 ? raws[raws.length - 1].LastHop : undefined,
+    pmtu: raws && raws.length > 0 ? raws[raws.length - 1].SetMTUTo : undefined,
   };
 }
 
@@ -328,6 +333,8 @@ export type PingRequest = {
   preferV6?: boolean;
 
   l3PacketType?: "icmp" | "udp";
+
+  randomPayloadSize?: number;
 };
 
 export function generatePingSampleStream(
@@ -345,6 +352,7 @@ export function generatePingSampleStream(
     preferV4,
     preferV6,
     l3PacketType,
+    randomPayloadSize,
   } = pingReq;
 
   const urlParams = new URLSearchParams();
@@ -376,6 +384,14 @@ export function generatePingSampleStream(
 
   if (l3PacketType !== undefined && l3PacketType !== null) {
     urlParams.set("l3PacketType", l3PacketType);
+  }
+
+  if (
+    randomPayloadSize !== undefined &&
+    randomPayloadSize !== null &&
+    randomPayloadSize > 0
+  ) {
+    urlParams.set("randomPayloadSize", randomPayloadSize.toString());
   }
 
   const headers = new Headers();

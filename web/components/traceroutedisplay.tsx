@@ -71,6 +71,9 @@ type HopEntryState = {
   peers: TraceroutePeerEntry[];
   rtts: TracerouteRTTStatsEntry;
   stats: TracerouteStatsEntry;
+
+  // a map from peer to mtu
+  pmtu?: Record<string, number>;
 };
 
 type TabState = {
@@ -141,6 +144,17 @@ function updateHopEntryState(
     newEntry.peers = sortAndDedupPeers([...newEntry.peers, newPeerEntry]);
     // high seq first
     newEntry.peers.sort((a, b) => b.seq - a.seq);
+  }
+
+  if (
+    pingSample.pmtu !== undefined &&
+    pingSample.pmtu !== null &&
+    !!pingSample.peer
+  ) {
+    newEntry.pmtu = {
+      ...newEntry.pmtu,
+      [pingSample.peer]: pingSample.pmtu,
+    };
   }
 
   return newEntry;
@@ -284,6 +298,7 @@ export function TracerouteResultDisplay(props: {
           preferV4: task.preferV4,
           preferV6: task.preferV6,
           l3PacketType: !!task.useUDP ? "udp" : "icmp",
+          randomPayloadSize: task.pmtu ? 1500 : undefined,
         });
         streamRef.current = stream;
         const reader = stream.getReader();
@@ -515,9 +530,12 @@ export function TracerouteResultDisplay(props: {
                         {entry.peers.map((peer, idx) => (
                           <Fragment key={idx}>
                             <IPDisp rdns={peer.ip.rdns} ip={peer.ip.ip} />
-                            <Box>{peer.asn}</Box>
-                            <Box>{peer.location}</Box>
-                            <Box>{peer.isp}</Box>
+                            {!!peer.asn && <Box>{peer.asn}</Box>}
+                            {!!peer.location && <Box>{peer.location}</Box>}
+                            {!!peer.isp && <Box>{peer.isp}</Box>}
+                            {!!entry.pmtu?.[peer.ip.ip] && (
+                              <Box>PMTU={entry.pmtu[peer.ip.ip]}</Box>
+                            )}
                           </Fragment>
                         ))}
                       </Box>

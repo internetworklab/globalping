@@ -8,6 +8,7 @@ export type PendingTask = {
   preferV4?: boolean;
   preferV6?: boolean;
   useUDP?: boolean;
+  pmtu?: boolean;
 };
 
 export type ExactLocation = {

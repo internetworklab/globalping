@@ -24,6 +24,7 @@ const (
 	AttributeKeyExactLocation      = "ExactLocation"
 	AttributeKeyDomainRespondRange = "DomainRespondRange"
 	AttributeKeySupportUDP         = "SupportUDP"
+	AttributeKeySupportPMTU        = "SupportPMTU"
 )
 
 type NodeRegistrationAgent struct {
