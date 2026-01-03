@@ -52,7 +52,7 @@ func GetMinimumMTU() int {
 	return minMTU
 }
 
-func GetNexthopMTU(destination net.IP) int {
+func GetNexthopMTU(destination net.IP, considerPMTUCache bool) int {
 	mtus := make([]int, 0)
 	handle, err := netlink.NewHandle()
 	if err != nil {
@@ -72,9 +72,13 @@ func GetNexthopMTU(destination net.IP) int {
 		if linkMtu := link.Attrs().MTU; linkMtu > 0 {
 			mtus = append(mtus, linkMtu)
 		}
-		if routeMtu := route.MTU; routeMtu > 0 {
-			mtus = append(mtus, routeMtu)
+
+		if considerPMTUCache {
+			if routeMtu := route.MTU; routeMtu > 0 {
+				mtus = append(mtus, routeMtu)
+			}
 		}
+
 	}
 	if len(mtus) == 0 {
 		return GetMinimumMTU()

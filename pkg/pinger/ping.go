@@ -120,7 +120,9 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		if pingRequest.RandomPayloadSize != nil && *pingRequest.RandomPayloadSize > 0 {
 			payloadLen = *pingRequest.RandomPayloadSize
 		}
-		nexthopMTU := pkgutils.GetNexthopMTU(dst.IP)
+
+		// consider nexthop interface MTU, but not PMTU cache
+		nexthopMTU := pkgutils.GetNexthopMTU(dst.IP, false)
 		var payload []byte = nil
 		if payloadLen > 0 {
 			ipVersion := ipv4.Version

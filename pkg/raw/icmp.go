@@ -352,9 +352,9 @@ func (icmp6tr *ICMP6Transceiver) getSenderAndTraceId() (packetConn net.PacketCon
 	listenConfig := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
-				// if err := syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_PMTUDISC_PROBE, 1); err != nil {
-				// 	panic(fmt.Errorf("failed to set IPV6_PMTUDISC_PROBE: %v", err))
-				// }
+				if err := syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_MTU_DISCOVER, syscall.IPV6_PMTUDISC_PROBE); err != nil {
+					panic(fmt.Errorf("failed to set IPV6_MTU_DISCOVER to IPV6_PMTUDISC_PROBE: %v", err))
+				}
 
 				// see rfc3542, section 11.2 "Sending without Fragmentation"
 				const IPV6_DONTFRAG int = 62
@@ -388,6 +388,7 @@ func (icmp6tr *ICMP6Transceiver) getSenderAndTraceId() (packetConn net.PacketCon
 		}
 		ipv6PacketConn = ipv6.NewPacketConn(packetConn)
 	}
+
 	return
 }
 
@@ -443,6 +444,7 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 
 		for {
 			nBytes, ctrlMsg, peerAddr, err := rxIPv6PacketConn.ReadFrom(rb)
+			log.Printf("[dbg] nBytes: %d, ctrlMsg: %v, peerAddr: %v, err: %v", nBytes, ctrlMsg, peerAddr, err)
 
 			if err != nil {
 				if err, ok := err.(net.Error); ok && err.Timeout() {
@@ -535,8 +537,6 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 					continue
 				}
 
-				log.Printf("[dbg] MTU from control message: %d", ctrlMsg.MTU)
-
 				replyObject.SetMTUTo = &packetTooBigMsg.MTU
 
 				originPktIdentifier, err := ExtractPacketInfoFromOriginIP6(packetTooBigMsg.Data, icmp6tr.udpBasePort)
@@ -623,6 +623,10 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 
 				wcm.HopLimit = req.TTL
 				nbytes, err := txIPv6PacketConn.WriteTo(wb, &wcm, dst)
+				if err != nil {
+					log.Printf("failed to write to connection, wcm: %v, dst: %v, error: %v", wcm, dst, err)
+				}
+
 				if err != nil && isFatalErr(err) {
 					errCh <- fmt.Errorf("failed to write to connection: %v", err)
 					return
