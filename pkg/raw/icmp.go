@@ -233,7 +233,6 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 					maxPayloadLen := GetMaxPayloadLen(ipv4.Version, int(layers.IPProtocolUDP), req.PMTU, req.NexthopMTU)
 					if len(udpLayer.Payload) > maxPayloadLen {
 						udpLayer.Payload = udpLayer.Payload[:maxPayloadLen]
-						log.Printf("truncated udp payload to %d bytes", maxPayloadLen)
 					}
 
 					udpTotalLen := udpHeaderLen + len(udpLayer.Payload)
@@ -261,7 +260,6 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 					maxPayloadLen := GetMaxPayloadLen(ipv4.Version, int(layers.IPProtocolICMPv4), req.PMTU, req.NexthopMTU)
 					if len(icmpEcho.Data) > maxPayloadLen {
 						icmpEcho.Data = icmpEcho.Data[:maxPayloadLen]
-						log.Printf("truncated icmp echo payload to %d bytes", maxPayloadLen)
 					}
 					wm := icmp.Message{
 						Type: ipv4.ICMPTypeEcho,
@@ -606,7 +604,6 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 					wb = req.Data
 					if len(wb) > maxPayloadLen {
 						wb = wb[:maxPayloadLen]
-						log.Printf("truncated udp payload to %d bytes", maxPayloadLen)
 					}
 				} else {
 					icmpEcho := &icmp.Echo{
@@ -617,7 +614,6 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 					maxPayloadLen := GetMaxPayloadLen(ipv6.Version, int(layers.IPProtocolICMPv6), req.PMTU, req.NexthopMTU)
 					if len(icmpEcho.Data) > maxPayloadLen {
 						icmpEcho.Data = icmpEcho.Data[:maxPayloadLen]
-						log.Printf("truncated icmp echo payload to %d bytes", maxPayloadLen)
 					}
 					wm := icmp.Message{
 						Type: ipv6.ICMPTypeEchoRequest, Code: 0,
