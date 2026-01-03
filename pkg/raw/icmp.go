@@ -385,6 +385,8 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 
 		for {
 			nBytes, ctrlMsg, peerAddr, err := packetConn.ReadFrom(rb)
+			log.Printf("[dbg] nBytes: %d, ctrlMsg: %v, peerAddr: %v, err: %v", nBytes, ctrlMsg, peerAddr, err)
+
 			if err != nil {
 				if err, ok := err.(net.Error); ok && err.Timeout() {
 					log.Printf("timeout reading from connection, skipping")
@@ -399,8 +401,6 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 				log.Printf("failed to parse icmp message: %v, raw: %v", err, string(rb[:nBytes]))
 				continue
 			}
-
-			log.Printf("[dbg] ctrlMsg.PMTU: %d", ctrlMsg.MTU)
 
 			ty := receiveMsg.Type.Protocol()
 			cd := receiveMsg.Code
@@ -478,15 +478,15 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 					continue
 				}
 
+				log.Printf("[dbg] MTU from control message: %d", ctrlMsg.MTU)
+
 				replyObject.SetMTUTo = &packetTooBigMsg.MTU
-				log.Printf("[dbg] fuck mtu: %d", packetTooBigMsg.MTU)
 
 				originPktIdentifier, err := ExtractPacketInfoFromOriginIP6(packetTooBigMsg.Data, icmp6tr.udpBasePort)
 				if err != nil {
 					log.Printf("failed to extract packet info from origin ip6 packet: %v", err)
 					continue
 				}
-				log.Printf("[dbg] origin pkt identifier: %v", originPktIdentifier.String())
 
 				replyObject.IPProto = originPktIdentifier.IPProto
 				replyObject.ID = originPktIdentifier.Id
@@ -517,9 +517,9 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 		listenConfig := net.ListenConfig{
 			Control: func(network, address string, c syscall.RawConn) error {
 				return c.Control(func(fd uintptr) {
-					if err := syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_PMTUDISC_PROBE, 1); err != nil {
-						panic(fmt.Errorf("failed to set IPV6_PMTUDISC_PROBE: %v", err))
-					}
+					// if err := syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_PMTUDISC_PROBE, 1); err != nil {
+					// 	panic(fmt.Errorf("failed to set IPV6_PMTUDISC_PROBE: %v", err))
+					// }
 
 					// see rfc3542, section 11.2 "Sending without Fragmentation"
 					const IPV6_DONTFRAG int = 62
@@ -610,6 +610,7 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) <-chan error {
 					}
 				}
 
+				time.Sleep(1 * time.Second)
 				wcm.HopLimit = req.TTL
 				nbytes, err := ipv6PacketConn.WriteTo(wb, &wcm, dst)
 				if err != nil && isFatalErr(err) {
