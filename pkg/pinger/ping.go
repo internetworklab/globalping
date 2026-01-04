@@ -187,6 +187,10 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					if wrappedEV.FoundLastHop() {
 						if autoTTL, ok := pingRequest.TTL.(*AutoTTL); ok {
 							autoTTL.Reset()
+
+							// after the last hop is met, we reset the probing MTU, allow it
+							// to probe the PMTU of other paths as well as the next packet will start at TTL=1
+							*pmtu = nexthopMTU
 						}
 					}
 
