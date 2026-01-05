@@ -27,6 +27,10 @@ type PacketInfo struct {
 	TCP     *layers.TCP
 }
 
+func (pktInfo *PacketInfo) String() string {
+	return fmt.Sprintf("%s:%d -> %s:%d", pktInfo.Hdr.Src, pktInfo.TCP.SrcPort, pktInfo.Hdr.Dst, pktInfo.TCP.DstPort)
+}
+
 func getPackets(rawConn *ipv4.RawConn) <-chan *PacketInfo {
 	rbCh := make(chan *PacketInfo)
 	rb := make([]byte, pkgutils.GetMaximumMTU())
@@ -300,6 +304,10 @@ type TCPSYNSentReceipt struct {
 	ReceivedC   chan *PacketInfo
 }
 
+func (receipt *TCPSYNSentReceipt) String() string {
+	return fmt.Sprintf("at %s, %s:%d -> %s:%d", receipt.SentAt.Format(time.RFC3339Nano), receipt.SrcIP, receipt.SrcPort, receipt.Request.DstIP, receipt.Request.DstPort)
+}
+
 type TCPSYNSender struct {
 }
 
@@ -331,7 +339,7 @@ func getSrcIP(dstIP net.IP) (net.IP, error) {
 	return routes[0].Src, nil
 }
 
-func buildTCPHdr(srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, ttl int, syn bool, rst bool) (*ipv4.Header, []byte, error) {
+func buildTCPHdr(srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, ttl int, syn bool, rst bool, seq uint32, ack uint32) (*ipv4.Header, []byte, error) {
 	ipProto := layers.IPProtocolTCP
 	var flags layers.IPv4Flag
 	flags = flags | layers.IPv4DontFragment
@@ -347,8 +355,8 @@ func buildTCPHdr(srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, ttl int, 
 	tcpLayer := &layers.TCP{
 		SrcPort:    layers.TCPPort(srcPort),
 		DstPort:    layers.TCPPort(dstPort),
-		Seq:        1000,
-		Ack:        0,
+		Seq:        seq,
+		Ack:        ack,
 		SYN:        syn,
 		RST:        rst,
 		DataOffset: uint8(tcpHdrLenNWords),
@@ -401,7 +409,7 @@ func (sender *TCPSYNSender) Send(rawConn *ipv4.RawConn, request *TCPSYNRequest, 
 		ttl = *request.TTL
 	}
 
-	hdr, wb, err := buildTCPHdr(srcIP, localPort, dstIP, request.DstPort, ttl, true, false)
+	hdr, wb, err := buildTCPHdr(srcIP, localPort, dstIP, request.DstPort, ttl, true, false, 1000, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build tcp syn: %v", err)
 	}
@@ -418,13 +426,14 @@ func (sender *TCPSYNSender) Send(rawConn *ipv4.RawConn, request *TCPSYNRequest, 
 	go func() {
 		defer tcpListener.Close()
 		defer timer.Stop()
+		defer close(receipt.TimeoutC)
 
 		select {
 		case time := <-timer.C:
 			receipt.TimeoutC <- time
 		case pkt, ok := <-receipt.ReceivedC:
 			if ok && pkt != nil && pkt.Hdr != nil && pkt.TCP != nil {
-				hdr, wb, err := buildTCPHdr(pkt.Hdr.Dst, int(pkt.TCP.DstPort), pkt.Hdr.Src, int(pkt.TCP.SrcPort), ttl, false, true)
+				hdr, wb, err := buildTCPHdr(pkt.Hdr.Dst, int(pkt.TCP.DstPort), pkt.Hdr.Src, int(pkt.TCP.SrcPort), ttl, false, true, 1000, 0)
 				if err != nil {
 					log.Printf("failed to build tcp rst: %v", err)
 					return
@@ -497,9 +506,9 @@ func main() {
 
 				switch event.Type {
 				case TrackerEVTimeout:
-					log.Printf("timeout event received")
+					log.Printf("timeout, it was: %s", event.Entry.Value.String())
 				case TrackerEVReceived:
-					log.Printf("received event received")
+					log.Printf("got reply: %s, it was: %s", event.Entry.Value.ReceivedPkt.String(), event.Entry.Value.String())
 				}
 			}
 		}
