@@ -324,6 +324,9 @@ type TCPSYNRequest struct {
 	DstPort int
 	Timeout time.Duration
 	TTL     *int
+	Seq     uint32
+	Ack     uint32
+	Window  uint16
 }
 
 func getSrcIP(dstIP net.IP) (net.IP, error) {
@@ -379,7 +382,7 @@ func buildTCPHdr6(srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, ttl int,
 	return wcm, wb, nil
 }
 
-func buildTCPHdr(srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, ttl int, syn bool, rst bool, seq uint32, ack uint32) (*ipv4.Header, []byte, error) {
+func buildTCPHdr(srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, ttl int, syn bool, rst bool, seq uint32, ack uint32, window uint16) (*ipv4.Header, []byte, error) {
 	ipProto := layers.IPProtocolTCP
 	var flags layers.IPv4Flag
 	flags = flags | layers.IPv4DontFragment
@@ -397,6 +400,7 @@ func buildTCPHdr(srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, ttl int, 
 		DstPort:    layers.TCPPort(dstPort),
 		Seq:        seq,
 		Ack:        ack,
+		Window:     window,
 		SYN:        syn,
 		RST:        rst,
 		DataOffset: uint8(tcpHdrLenNWords),
@@ -460,7 +464,7 @@ func (sender *TCPSYNSender) Send(request *TCPSYNRequest, tracker *Tracker) (*TCP
 		ttl = *request.TTL
 	}
 
-	hdr, wb, err := buildTCPHdr(srcIP, localPort, dstIP, request.DstPort, ttl, true, false, 1000, 0)
+	hdr, wb, err := buildTCPHdr(srcIP, localPort, dstIP, request.DstPort, ttl, true, false, request.Seq, request.Ack, request.Window)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build tcp syn: %v", err)
 	}
@@ -484,7 +488,7 @@ func (sender *TCPSYNSender) Send(request *TCPSYNRequest, tracker *Tracker) (*TCP
 			receipt.TimeoutC <- time
 		case pkt, ok := <-receipt.ReceivedC:
 			if ok && pkt != nil && pkt.TCP != nil {
-				hdr, wb, err := buildTCPHdr(pkt.DstIP, int(pkt.TCP.DstPort), pkt.SrcIP, int(pkt.TCP.SrcPort), ttl, false, true, 1000, 0)
+				hdr, wb, err := buildTCPHdr(pkt.DstIP, int(pkt.TCP.DstPort), pkt.SrcIP, int(pkt.TCP.SrcPort), ttl, false, true, 0, 0, request.Window)
 				if err != nil {
 					log.Printf("failed to build tcp rst: %v", err)
 					return

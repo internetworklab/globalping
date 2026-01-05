@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"math/rand"
 	"net"
 	"os"
 	"os/signal"
@@ -135,10 +136,14 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				initSeqNum := rand.Intn(0x100000000)
 				synRequest := &pkgtcping.TCPSYNRequest{
 					DstIP:   dstIP,
 					DstPort: dstPort,
 					Timeout: 3 * time.Second,
+					Seq:     uint32(initSeqNum),
+					Ack:     0,
+					Window:  0xffff,
 				}
 				_, err := sender.Send(synRequest, tracker)
 				if err != nil {
