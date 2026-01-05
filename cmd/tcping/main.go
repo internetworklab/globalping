@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -158,10 +160,12 @@ type Tracker struct {
 	serviceChan chan chan ServiceRequest
 	EventC      chan TrackerEvent
 	store       *btree.BTree
+	counter     int
 }
 
 type TrackerConfig struct {
 	EVBufferSize *int
+	InitialSeq   *int
 }
 
 func NewTracker(config *TrackerConfig) *Tracker {
@@ -172,6 +176,9 @@ func NewTracker(config *TrackerConfig) *Tracker {
 	if config != nil {
 		if config.EVBufferSize != nil {
 			tracker.EventC = make(chan TrackerEvent, *config.EVBufferSize)
+		}
+		if config.InitialSeq != nil {
+			tracker.counter = *config.InitialSeq
 		}
 	}
 	return tracker
@@ -251,7 +258,6 @@ func (tk *Tracker) handleTimeout(ent *TrackEntry) {
 
 func (tk *Tracker) MarkSent(sentReceipt *TCPSYNSentReceipt) {
 	key := buildKey(sentReceipt.SrcIP, sentReceipt.SrcPort, sentReceipt.Request.DstIP, sentReceipt.Request.DstPort)
-	log.Printf("[dbg] sent key: %x", key)
 
 	ent := &TrackEntry{Key: key, Value: sentReceipt}
 
@@ -264,6 +270,8 @@ func (tk *Tracker) MarkSent(sentReceipt *TCPSYNSentReceipt) {
 	request := ServiceRequest{
 		Result: make(chan error),
 		Fn: func(ctx context.Context) error {
+			ent.Value.Seq = tk.counter
+			tk.counter++
 			tk.store.ReplaceOrInsert(ent)
 			go func() {
 				for range ent.Value.TimeoutC {
@@ -290,10 +298,7 @@ func (tk *Tracker) MarkReceived(receivedPkt *PacketInfo) {
 		return
 	}
 
-	log.Printf("[dbg] fuck 1: %s:%s -> %s:%s\n", receivedPkt.Hdr.Src, receivedPkt.TCP.SrcPort, receivedPkt.Hdr.Dst, receivedPkt.TCP.DstPort)
-
 	key := buildKey(receivedPkt.Hdr.Dst, int(receivedPkt.TCP.DstPort), receivedPkt.Hdr.Src, int(receivedPkt.TCP.SrcPort))
-	log.Printf("[dbg] fuck 1 key: %x", key)
 	receivedAt := time.Now()
 
 	request := ServiceRequest{
@@ -308,6 +313,8 @@ func (tk *Tracker) MarkReceived(receivedPkt *PacketInfo) {
 				ent.Value.ReceivedAt = receivedAt
 				ent.Value.ReceivedPkt = receivedPkt
 				ent.Value.ReceivedC <- receivedPkt
+				ent.Value.RTT = receivedAt.Sub(ent.Value.SentAt)
+				tk.EventC <- TrackerEvent{Type: TrackerEVReceived, Entry: ent}
 			}
 
 			return nil
@@ -321,6 +328,7 @@ func (tk *Tracker) MarkReceived(receivedPkt *PacketInfo) {
 }
 
 type TCPSYNSentReceipt struct {
+	Seq         int
 	SrcIP       net.IP
 	SrcPort     int
 	Request     *TCPSYNRequest
@@ -329,6 +337,7 @@ type TCPSYNSentReceipt struct {
 	ReceivedPkt *PacketInfo
 	TimeoutC    chan time.Time
 	ReceivedC   chan *PacketInfo
+	RTT         time.Duration
 }
 
 func NewTCPSYNSentReceipt(request *TCPSYNRequest) *TCPSYNSentReceipt {
@@ -340,7 +349,7 @@ func NewTCPSYNSentReceipt(request *TCPSYNRequest) *TCPSYNSentReceipt {
 }
 
 func (receipt *TCPSYNSentReceipt) String() string {
-	return fmt.Sprintf("at %s, %s:%d -> %s:%d", receipt.SentAt.Format(time.RFC3339Nano), receipt.SrcIP, receipt.SrcPort, receipt.Request.DstIP, receipt.Request.DstPort)
+	return fmt.Sprintf("at %s, seq %d, %s:%d -> %s:%d", receipt.SentAt.Format(time.RFC3339Nano), receipt.Seq, receipt.SrcIP, receipt.SrcPort, receipt.Request.DstIP, receipt.Request.DstPort)
 }
 
 const defaultTTL int = 64
@@ -500,12 +509,39 @@ func getRawIPv4Conn(ctx context.Context) (net.PacketConn, *ipv4.RawConn, error) 
 	return ln, rawConn, nil
 }
 
+var (
+	hostport = flag.String("hostport", "127.0.0.1:80", "host:port to ping")
+	intvMs   = flag.Int("intvMs", 1000, "interval between pings in milliseconds")
+)
+
+func init() {
+	flag.Parse()
+}
+
 func main() {
 
-	dstIP := net.ParseIP("172.17.0.7")
-	dstPort := 80
-
 	ctx := context.Background()
+
+	host, port, err := net.SplitHostPort(*hostport)
+	if err != nil {
+		log.Fatalf("failed to split host and port: %v", err)
+	}
+
+	resolver := net.DefaultResolver
+	dstIPs, err := resolver.LookupIP(ctx, "ip4", host)
+	if err != nil {
+		log.Fatalf("failed to lookup ip: %v", err)
+	}
+
+	if len(dstIPs) == 0 {
+		log.Fatalf("no ip found for %s", host)
+	}
+
+	dstIP := dstIPs[0]
+	dstPort, err := strconv.Atoi(port)
+	if err != nil {
+		log.Fatalf("failed to convert port to int: %v", err)
+	}
 
 	ln, rawConn, err := getRawIPv4Conn(ctx)
 	if err != nil {
@@ -544,7 +580,7 @@ func main() {
 				case TrackerEVTimeout:
 					log.Printf("timeout, it was: %s", event.Entry.Value.String())
 				case TrackerEVReceived:
-					log.Printf("got reply: %s, it was: %s", event.Entry.Value.ReceivedPkt.String(), event.Entry.Value.String())
+					log.Printf("got reply: %s, rtt: %s, it was: %s", event.Entry.Value.ReceivedPkt.String(), event.Entry.Value.RTT.String(), event.Entry.Value.String())
 				}
 			}
 		}
@@ -576,7 +612,7 @@ func main() {
 	}(ctx)
 
 	go func() {
-		ticker := time.NewTicker(3 * time.Second)
+		ticker := time.NewTicker(time.Duration(*intvMs) * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
@@ -588,11 +624,11 @@ func main() {
 					DstPort: dstPort,
 					Timeout: 3 * time.Second,
 				}
-				receipt, err := Send(rawConn, synRequest, tracker)
+				_, err := Send(rawConn, synRequest, tracker)
 				if err != nil {
 					log.Fatalf("failed to send tcp syn: %v", err)
 				}
-				log.Printf("sent syn: %s", receipt.String())
+				// log.Printf("sent syn: %s", receipt.String())
 			}
 		}
 	}()
