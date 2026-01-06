@@ -19,6 +19,12 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
+type TCPSYNSenderHook func(ctx context.Context, srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, nBytes int)
+
+type TCPSYNSenderConfig struct {
+	OnSent TCPSYNSenderHook
+}
+
 type PacketInfo struct {
 	SrcIP   net.IP
 	DstIP   net.IP
@@ -434,16 +440,17 @@ func buildTCPHdr(srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, ttl int, 
 const tcpHdrLenNWords int = 5
 
 type Sender interface {
-	Send(request *TCPSYNRequest, tracker *Tracker) (*TCPSYNSentReceipt, error)
+	Send(ctx context.Context, request *TCPSYNRequest, tracker *Tracker) (*TCPSYNSentReceipt, error)
 	GetPackets() <-chan *PacketInfo
 }
 
 type TCPSYNSender struct {
 	RawConn  *ipv4.RawConn
 	listener net.PacketConn
+	OnSent   TCPSYNSenderHook
 }
 
-func (sender *TCPSYNSender) Send(request *TCPSYNRequest, tracker *Tracker) (*TCPSYNSentReceipt, error) {
+func (sender *TCPSYNSender) Send(ctx context.Context, request *TCPSYNRequest, tracker *Tracker) (*TCPSYNSentReceipt, error) {
 	rawConn := sender.RawConn
 	receipt := NewTCPSYNSentReceipt(request)
 
@@ -479,6 +486,9 @@ func (sender *TCPSYNSender) Send(request *TCPSYNRequest, tracker *Tracker) (*TCP
 	}
 	receipt.SentAt = time.Now()
 	timer := time.NewTimer(request.Timeout)
+	if sender.OnSent != nil {
+		sender.OnSent(ctx, srcIP, localPort, dstIP, request.DstPort, len(wb)+ipv4.HeaderLen)
+	}
 
 	go func() {
 		defer tcpListener.Close()
@@ -498,6 +508,9 @@ func (sender *TCPSYNSender) Send(request *TCPSYNRequest, tracker *Tracker) (*TCP
 				err = rawConn.WriteTo(hdr, wb, nil)
 				if err != nil {
 					log.Printf("failed to write rst to raw connection: %v", err)
+				}
+				if sender.OnSent != nil {
+					sender.OnSent(ctx, pkt.DstIP, int(pkt.TCP.DstPort), pkt.SrcIP, int(pkt.TCP.SrcPort), len(wb)+ipv4.HeaderLen)
 				}
 			}
 			return
@@ -547,9 +560,10 @@ func (sender *TCPSYNSender) Close() error {
 type TCPSYNSender6 struct {
 	RawConn  *ipv6.PacketConn
 	listener net.PacketConn
+	OnSent   TCPSYNSenderHook
 }
 
-func (sender *TCPSYNSender6) Send(request *TCPSYNRequest, tracker *Tracker) (*TCPSYNSentReceipt, error) {
+func (sender *TCPSYNSender6) Send(ctx context.Context, request *TCPSYNRequest, tracker *Tracker) (*TCPSYNSentReceipt, error) {
 	rawConn := sender.RawConn
 	receipt := NewTCPSYNSentReceipt(request)
 
@@ -586,6 +600,9 @@ func (sender *TCPSYNSender6) Send(request *TCPSYNRequest, tracker *Tracker) (*TC
 	}
 	receipt.SentAt = time.Now()
 	timer := time.NewTimer(request.Timeout)
+	if sender.OnSent != nil {
+		sender.OnSent(ctx, srcIP, localPort, dstIP, request.DstPort, len(wb)+ipv6.HeaderLen)
+	}
 
 	go func() {
 		defer tcpListener.Close()
@@ -606,6 +623,9 @@ func (sender *TCPSYNSender6) Send(request *TCPSYNRequest, tracker *Tracker) (*TC
 				_, err = rawConn.WriteTo(wb, wcm, dstIPAddr)
 				if err != nil {
 					log.Printf("failed to write rst to raw connection: %v", err)
+				}
+				if sender.OnSent != nil {
+					sender.OnSent(ctx, pkt.DstIP, int(pkt.TCP.DstPort), pkt.SrcIP, int(pkt.TCP.SrcPort), len(wb)+ipv6.HeaderLen)
 				}
 			}
 			return
@@ -658,7 +678,7 @@ func (sender *TCPSYNSender6) Close() error {
 	return sender.listener.Close()
 }
 
-func NewTCPSYNSender6(ctx context.Context) (*TCPSYNSender6, error) {
+func NewTCPSYNSender6(ctx context.Context, config *TCPSYNSenderConfig) (*TCPSYNSender6, error) {
 	listenConfig := net.ListenConfig{}
 
 	ipProtoTCP := fmt.Sprintf("%d", int(layers.IPProtocolTCP))
@@ -678,11 +698,14 @@ func NewTCPSYNSender6(ctx context.Context) (*TCPSYNSender6, error) {
 		RawConn:  rawConn,
 		listener: ln,
 	}
+	if config != nil && config.OnSent != nil {
+		sender.OnSent = config.OnSent
+	}
 
 	return sender, nil
 }
 
-func NewTCPSYNSender(ctx context.Context) (*TCPSYNSender, error) {
+func NewTCPSYNSender(ctx context.Context, config *TCPSYNSenderConfig) (*TCPSYNSender, error) {
 	listenConfig := net.ListenConfig{}
 
 	ipProtoTCP := fmt.Sprintf("%d", int(layers.IPProtocolTCP))
@@ -701,6 +724,9 @@ func NewTCPSYNSender(ctx context.Context) (*TCPSYNSender, error) {
 	sender := &TCPSYNSender{
 		RawConn:  rawConn,
 		listener: ln,
+	}
+	if config != nil && config.OnSent != nil {
+		sender.OnSent = config.OnSent
 	}
 
 	return sender, nil

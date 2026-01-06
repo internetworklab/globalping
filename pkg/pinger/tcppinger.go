@@ -14,6 +14,8 @@ import (
 
 type TCPSYNPinger struct {
 	PingRequest *SimplePingRequest
+	OnSent      pkgtcping.TCPSYNSenderHook
+	OnReceived  pkgtcping.TCPSYNSenderHook
 }
 
 func (pinger *TCPSYNPinger) getHostAndPort(ctx context.Context) (net.IP, int, error) {
@@ -73,8 +75,11 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 		}
 
 		var sender pkgtcping.Sender
+		senderConfig := &pkgtcping.TCPSYNSenderConfig{
+			OnSent: pinger.OnSent,
+		}
 		if dstIP.To4() == nil {
-			sender6, err := pkgtcping.NewTCPSYNSender6(ctx)
+			sender6, err := pkgtcping.NewTCPSYNSender6(ctx, senderConfig)
 			if err != nil {
 				evCh <- PingEvent{Error: fmt.Errorf("failed to create ipv6 tcp syn sender: %v", err)}
 				return
@@ -82,7 +87,7 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 			defer sender6.Close()
 			sender = sender6
 		} else {
-			sender4, err := pkgtcping.NewTCPSYNSender(ctx)
+			sender4, err := pkgtcping.NewTCPSYNSender(ctx, senderConfig)
 			if err != nil {
 				evCh <- PingEvent{Error: fmt.Errorf("failed to create ipv4 tcp syn sender: %v", err)}
 				return
@@ -107,6 +112,18 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 					}
 					evCh <- PingEvent{Data: event}
 					if event.Type == pkgtcping.TrackerEVReceived || event.Type == pkgtcping.TrackerEVTimeout {
+						if event.Type == pkgtcping.TrackerEVReceived && pinger.OnReceived != nil {
+							receivedPkt := event.Entry.Value.ReceivedPkt
+							pinger.OnReceived(
+								ctx,
+								receivedPkt.SrcIP,
+								int(receivedPkt.TCP.SrcPort),
+								receivedPkt.DstIP,
+								int(receivedPkt.TCP.DstPort),
+								receivedPkt.Size,
+							)
+						}
+
 						if totalPkts := pinger.PingRequest.TotalPkts; totalPkts != nil {
 							if *totalPkts == event.Entry.Value.Seq+1 {
 								allConfirmedCh <- true
@@ -163,7 +180,7 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 					Ack:     0,
 					Window:  0xffff,
 				}
-				receipt, err := sender.Send(synRequest, tracker)
+				receipt, err := sender.Send(ctx, synRequest, tracker)
 				if err != nil {
 					evCh <- PingEvent{Error: fmt.Errorf("failed to send tcp syn: %v", err)}
 					return
