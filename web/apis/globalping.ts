@@ -219,6 +219,7 @@ type RawTCPPingEventDataDetails = {
     Size?: number;
   };
   RTT?: number; // in unit of nanoseconds
+  SentTTL?: number; // ttl or hoplimit in the ip header that was sent
 };
 
 type RawTCPPingEventData = {
@@ -314,6 +315,22 @@ class JSONLineDecoder extends TransformStream<TokenObject, unknown> {
   }
 }
 
+class TCPPingEventAdapter extends TransformStream<RawTCPPingEvent, PingSample> {
+  constructor() {
+    super({
+      transform(
+        chunk: RawTCPPingEvent,
+        controller: TransformStreamDefaultController<PingSample>
+      ) {
+        const maybeSample = pingSampleFromTCPEvent(chunk);
+        if (maybeSample) {
+          controller.enqueue(maybeSample);
+        }
+      },
+    });
+  }
+}
+
 class PingEventAdapter extends TransformStream<RawPingEvent, PingSample> {
   constructor() {
     super({
@@ -330,7 +347,9 @@ class PingEventAdapter extends TransformStream<RawPingEvent, PingSample> {
   }
 }
 
-function pingSampleFromTCPEvent(event: RawTCPPingEvent): PingSample | undefined {
+function pingSampleFromTCPEvent(
+  event: RawTCPPingEvent
+): PingSample | undefined {
   const from = event.metadata?.from || "";
   const target = event.metadata?.target || "";
   if (!event.data) {
@@ -341,7 +360,7 @@ function pingSampleFromTCPEvent(event: RawTCPPingEvent): PingSample | undefined 
   if (!details) {
     return undefined;
   }
-  if (event?.data?.Type !== 'received') {
+  if (event?.data?.Type !== "received") {
     return undefined;
   }
 
@@ -350,6 +369,26 @@ function pingSampleFromTCPEvent(event: RawTCPPingEvent): PingSample | undefined 
     return;
   }
 
+  if (!from || !target) {
+    return undefined;
+  }
+  const ttl = details?.SentTTL;
+  if (ttl === undefined || ttl === null) {
+    return undefined;
+  }
+  const seq = details?.Seq;
+  if (seq === undefined || seq === null) {
+    return undefined;
+  }
+
+  return {
+    from: from,
+    target: target,
+    latencyMs: details?.RTT ? details.RTT / 1000000 : undefined,
+    ttl: ttl,
+    seq: seq,
+    peer: details?.Request?.DstIP ?? undefined,
+  };
 }
 
 function pingSampleFromEvent(event: RawPingEvent): PingSample | undefined {
@@ -515,7 +554,11 @@ export function generatePingSampleStream(
             ?.pipeThrough(new TextDecoderStream())
             .pipeThrough(new LineTokenizer())
             .pipeThrough(new JSONLineDecoder())
-            .pipeThrough(new PingEventAdapter());
+            .pipeThrough(
+              l4PacketType === "tcp"
+                ? new TCPPingEventAdapter()
+                : new PingEventAdapter()
+            );
         })
         .then((maybeSampleStream) => {
           controlscope.sampleStream = maybeSampleStream;

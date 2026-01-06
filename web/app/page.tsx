@@ -294,6 +294,8 @@ export default function Home() {
                 placeholder={
                   pendingTask.type === "ping"
                     ? "Targets, separated by comma"
+                    : pendingTask.type === "tcpping"
+                    ? 'Specify a single target, in the format of <host>:<port>", e.g. 192.168.1.1:80, or cloudflare.com:443'
                     : "Specify a single target"
                 }
                 fullWidth
