@@ -3,7 +3,6 @@ package pinger
 import (
 	"context"
 	"fmt"
-	"log"
 	"math/rand"
 	"net"
 	"strconv"
@@ -37,10 +36,10 @@ func (pinger *TCPSYNPinger) getHostAndPort(ctx context.Context) (net.IP, int, er
 	resolver := net.DefaultResolver
 	inetPref := "ip"
 	if pinger.PingRequest.PreferV4 != nil && *pinger.PingRequest.PreferV4 {
-		inetPref = "ipv4"
+		inetPref = "ip4"
 	}
 	if pinger.PingRequest.PreferV6 != nil && *pinger.PingRequest.PreferV6 {
-		inetPref = "ipv6"
+		inetPref = "ip6"
 	}
 	dstIPs, err := resolver.LookupIP(ctx, inetPref, host)
 	if err != nil {
@@ -96,6 +95,7 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 		tracker := pkgtcping.NewTracker(trackerConfig)
 		tracker.Run(ctx)
 
+		allConfirmedCh := make(chan bool, 1)
 		go func(ctx context.Context) {
 			for {
 				select {
@@ -106,6 +106,14 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 						return
 					}
 					evCh <- PingEvent{Data: event}
+					if event.Type == pkgtcping.TrackerEVReceived || event.Type == pkgtcping.TrackerEVTimeout {
+						if totalPkts := pinger.PingRequest.TotalPkts; totalPkts != nil {
+							if *totalPkts == event.Entry.Value.Seq+1 {
+								allConfirmedCh <- true
+								return
+							}
+						}
+					}
 				}
 			}
 		}(ctx)
@@ -126,7 +134,6 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 					return
 				case pktInfo, ok := <-filteredCh:
 					if !ok {
-						log.Printf("filteredCh is closed")
 						return
 					}
 
@@ -135,45 +142,43 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 			}
 		}(ctx)
 
-		go func() {
-			intvMs := pinger.PingRequest.IntvMilliseconds
-			ticker := time.NewTicker(time.Duration(intvMs) * time.Millisecond)
+		intvMs := pinger.PingRequest.IntvMilliseconds
+		ticker := time.NewTicker(time.Duration(intvMs) * time.Millisecond)
 
-			pktTimeoutMs := pinger.PingRequest.PktTimeoutMilliseconds
-			pktTimeout := time.Duration(pktTimeoutMs) * time.Millisecond
+		pktTimeoutMs := pinger.PingRequest.PktTimeoutMilliseconds
+		pktTimeout := time.Duration(pktTimeoutMs) * time.Millisecond
 
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				initSeqNum := rand.Uint32()
+				synRequest := &pkgtcping.TCPSYNRequest{
+					DstIP:   dstIP,
+					DstPort: dstPort,
+					Timeout: pktTimeout,
+					Seq:     initSeqNum,
+					Ack:     0,
+					Window:  0xffff,
+				}
+				receipt, err := sender.Send(synRequest, tracker)
+				if err != nil {
+					evCh <- PingEvent{Error: fmt.Errorf("failed to send tcp syn: %v", err)}
 					return
-				case <-ticker.C:
-					initSeqNum := rand.Uint32()
-					synRequest := &pkgtcping.TCPSYNRequest{
-						DstIP:   dstIP,
-						DstPort: dstPort,
-						Timeout: pktTimeout,
-						Seq:     initSeqNum,
-						Ack:     0,
-						Window:  0xffff,
-					}
-					receipt, err := sender.Send(synRequest, tracker)
-					if err != nil {
-						evCh <- PingEvent{Error: fmt.Errorf("failed to send tcp syn: %v", err)}
-						return
-					}
+				}
 
-					if totalPkts := pinger.PingRequest.TotalPkts; totalPkts != nil {
-						if receipt.Seq+1 == *totalPkts {
-							// no more packets to send
-							return
-						}
+				if totalPkts := pinger.PingRequest.TotalPkts; totalPkts != nil {
+					if receipt.Seq+1 == *totalPkts {
+						// no more packets to send
+						<-allConfirmedCh
+						return
 					}
 				}
 			}
-		}()
+		}
 
-		<-ctx.Done()
 	}()
 	return evCh
 }
