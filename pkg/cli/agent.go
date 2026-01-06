@@ -397,6 +397,10 @@ func (agentCmd *AgentCmd) Run() error {
 			attributes[pkgnodereg.AttributeKeySupportPMTU] = "true"
 		}
 
+		if agentCmd.SupportTCP {
+			attributes[pkgnodereg.AttributeKeySupportTCP] = "true"
+		}
+
 		agent := pkgnodereg.NodeRegistrationAgent{
 			ServerAddress: agentCmd.ServerAddress,
 			NodeName:      agentCmd.NodeName,

@@ -25,6 +25,7 @@ const (
 	AttributeKeyDomainRespondRange = "DomainRespondRange"
 	AttributeKeySupportUDP         = "SupportUDP"
 	AttributeKeySupportPMTU        = "SupportPMTU"
+	AttributeKeySupportTCP         = "SupportTCP"
 )
 
 type NodeRegistrationAgent struct {
