@@ -297,7 +297,7 @@ export function TracerouteResultDisplay(props: {
           ipInfoProviderName: "auto",
           preferV4: task.preferV4,
           preferV6: task.preferV6,
-          l3PacketType: !!task.useUDP ? "udp" : "icmp",
+          l4PacketType: !!task.useUDP ? "udp" : "icmp",
           randomPayloadSize: task.pmtu ? 1500 : undefined,
         });
         streamRef.current = stream;
