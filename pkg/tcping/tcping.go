@@ -306,8 +306,8 @@ type TCPSYNSentReceipt struct {
 	SentAt      time.Time
 	ReceivedAt  time.Time
 	ReceivedPkt *PacketInfo
-	TimeoutC    chan time.Time
-	ReceivedC   chan *PacketInfo
+	TimeoutC    chan time.Time   `json:"-"`
+	ReceivedC   chan *PacketInfo `json:"-"`
 	RTT         time.Duration
 }
 

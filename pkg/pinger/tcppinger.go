@@ -105,6 +105,7 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 					if !ok {
 						return
 					}
+
 					evCh <- PingEvent{Data: event}
 					if event.Type == pkgtcping.TrackerEVReceived || event.Type == pkgtcping.TrackerEVTimeout {
 						if event.Type == pkgtcping.TrackerEVReceived && pinger.OnReceived != nil {
@@ -125,6 +126,7 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 								return
 							}
 						}
+
 					}
 				}
 			}
@@ -148,7 +150,6 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 					if !ok {
 						return
 					}
-
 					tracker.MarkReceived(pktInfo)
 				}
 			}

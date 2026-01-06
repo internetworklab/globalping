@@ -136,29 +136,46 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	onSent := func(ctx context.Context, request *pkgraw.ICMPSendRequest, reply *pkgraw.ICMPReceiveReply, peer string, nBytes int) error {
-		counterStore.NumBytesSent.With(commonLabels).Add(float64(nBytes))
-		return nil
+	var pinger pkgpinger.Pinger = nil
+	path := r.URL.Path
+	if strings.HasSuffix(path, "/simpleping") {
+		icmpOrUDPPinger := &pkgpinger.SimplePinger{
+			PingRequest:   pingRequest,
+			IPInfoAdapter: ipinfoAdapter,
+			RespondRange:  ph.RespondRange,
+			OnSent: func(ctx context.Context, request *pkgraw.ICMPSendRequest, reply *pkgraw.ICMPReceiveReply, peer string, nBytes int) error {
+				counterStore.NumBytesSent.With(commonLabels).Add(float64(nBytes))
+				return nil
+			},
+			OnReceived: func(ctx context.Context, request *pkgraw.ICMPSendRequest, reply *pkgraw.ICMPReceiveReply, peer string, nBytes int) error {
+				counterStore.NumBytesReceived.With(commonLabels).Add(float64(nBytes))
+				return nil
+			},
+		}
+		pinger = icmpOrUDPPinger
+	} else if strings.HasSuffix(path, "/tcping") {
+		tcpingPinger := &pkgpinger.TCPSYNPinger{
+			PingRequest:  pingRequest,
+			RespondRange: ph.RespondRange,
+			OnSent: func(ctx context.Context, srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, nBytes int) {
+				counterStore.NumBytesSent.With(commonLabels).Add(float64(nBytes))
+			},
+			OnReceived: func(ctx context.Context, srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, nBytes int) {
+				counterStore.NumBytesReceived.With(commonLabels).Add(float64(nBytes))
+			},
+		}
+		pinger = tcpingPinger
 	}
 
-	onReceived := func(ctx context.Context, request *pkgraw.ICMPSendRequest, reply *pkgraw.ICMPReceiveReply, peer string, nBytes int) error {
-		counterStore.NumBytesReceived.With(commonLabels).Add(float64(nBytes))
-		return nil
-	}
-
-	pinger := &pkgpinger.SimplePinger{
-		PingRequest:   pingRequest,
-		IPInfoAdapter: ipinfoAdapter,
-		RespondRange:  ph.RespondRange,
-		OnSent:        onSent,
-		OnReceived:    onReceived,
-	}
 	for ev := range pinger.Ping(ctx) {
 		if ev.Error != nil {
 			errStr := ev.Error.Error()
 			ev.Err = &errStr
 		}
-		json.NewEncoder(w).Encode(ev)
+		if err := json.NewEncoder(w).Encode(ev); err != nil {
+			log.Printf("failed to serialize event: %v", err)
+			continue
+		}
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
@@ -250,6 +267,7 @@ func (agentCmd *AgentCmd) Run() error {
 
 	muxer := http.NewServeMux()
 	muxer.Handle("/simpleping", handler)
+	muxer.Handle("/tcping", handler)
 
 	var muxedHandler http.Handler = muxer
 	muxedHandler = pkgmyprom.WithCounterStoreHandler(muxedHandler, counterStore)
