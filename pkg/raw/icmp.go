@@ -244,13 +244,13 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 						DstPort: layers.UDPPort(udpDstPort),
 					}
 
-					udpLayer.Payload = req.Data
+					payloadData := req.Data
 					maxPayloadLen := GetMaxPayloadLen(ipv4.Version, int(layers.IPProtocolUDP), req.PMTU, req.NexthopMTU)
-					if len(udpLayer.Payload) > maxPayloadLen {
-						udpLayer.Payload = udpLayer.Payload[:maxPayloadLen]
+					if len(payloadData) > maxPayloadLen {
+						payloadData = payloadData[:maxPayloadLen]
 					}
 
-					udpTotalLen := udpHeaderLen + len(udpLayer.Payload)
+					udpTotalLen := udpHeaderLen + len(payloadData)
 					udpLayer.Length = uint16(udpTotalLen)
 					if int(udpTotalLen) != int(udpLayer.Length) {
 						log.Printf("udp total length mismatch, the packet will be dropped, expected: %d, got: %d", udpTotalLen, udpLayer.Length)
@@ -259,7 +259,13 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 
 					buf := gopacket.NewSerializeBuffer()
 					opts := gopacket.SerializeOptions{}
-					err = gopacket.SerializeLayers(buf, opts, udpLayer)
+					payloadLayer := gopacket.Payload(payloadData)
+					err = payloadLayer.SerializeTo(buf, opts)
+					if err != nil {
+						errCh <- fmt.Errorf("failed to serialize payload layer of udp: %v", err)
+						return
+					}
+					err = udpLayer.SerializeTo(buf, opts)
 					if err != nil {
 						errCh <- fmt.Errorf("failed to serialize udp layer: %v", err)
 						return
