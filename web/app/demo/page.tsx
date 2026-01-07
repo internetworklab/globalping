@@ -18,7 +18,12 @@ export default function DemoPage() {
   const canvasWidth = 40000;
   const canvasHeight = 25000;
 
-  const { canvasSvgRef } = useCanvasSizing(canvasWidth, canvasHeight, show);
+  const { canvasSvgRef } = useCanvasSizing(
+    canvasWidth,
+    canvasHeight,
+    show,
+    true
+  );
   //   const fill: CSSProperties["fill"] = "hsl(202deg 32% 50%)";
   const fill: CSSProperties["fill"] = "#2b2b2b";
 

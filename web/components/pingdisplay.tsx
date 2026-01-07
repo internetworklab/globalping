@@ -333,7 +333,7 @@ function RowMap(props: {
   const canvasX = 360000;
   const canvasY = 200000;
 
-  const { canvasSvgRef } = useCanvasSizing(canvasX, canvasY, expanded);
+  const { canvasSvgRef } = useCanvasSizing(canvasX, canvasY, expanded, false);
 
   const { data: conns } = useQuery({
     queryKey: ["nodes"],

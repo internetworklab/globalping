@@ -170,7 +170,8 @@ function getViewBox(svg: SVGSVGElement): number[] {
 export function useCanvasSizing(
   canvasW: number,
   canvasH: number,
-  expanded: boolean
+  expanded: boolean,
+  enableZoom: boolean
 ) {
   const canvasSvgRef = useRef<SVGSVGElement>(null);
   useEffect(() => {
@@ -241,12 +242,14 @@ export function useCanvasSizing(
       const ratio = projYLen / projXLen;
       const newProjYLen = projYLen * (1 + delta / 280);
       const newProjXLen = newProjYLen / ratio;
-      // todo
+
       const deltaX = projXLen - newProjXLen;
       const deltaY = projYLen - newProjYLen;
       const newOffsetX = offsetX + deltaX / 2;
       const newOffsetY = offsetY + deltaY / 2;
-      setViewBox(svg!, [newOffsetX, newOffsetY, newProjXLen, newProjYLen]);
+      if (enableZoom) {
+        setViewBox(svg!, [newOffsetX, newOffsetY, newProjXLen, newProjYLen]);
+      }
     };
     window.addEventListener("wheel", onWheel);
     console.log("[dbg] added wheel listener");
