@@ -19,7 +19,8 @@ export default function DemoPage() {
   const canvasHeight = 25000;
 
   const { canvasSvgRef } = useCanvasSizing(canvasWidth, canvasHeight, show);
-  const fill: CSSProperties["fill"] = "hsl(202deg 32% 50%)";
+  //   const fill: CSSProperties["fill"] = "hsl(202deg 32% 50%)";
+  const fill: CSSProperties["fill"] = "#2b2b2b";
 
   return (
     <Box
@@ -30,7 +31,6 @@ export default function DemoPage() {
         top: 0,
         left: 0,
         overflow: "hidden",
-        backgroundColor: "#242424",
       }}
     >
       <WorldMap

@@ -239,7 +239,7 @@ export function useCanvasSizing(
       const delta = event.deltaY;
       const [offsetX, offsetY, projXLen, projYLen] = getViewBox(svg!);
       const ratio = projYLen / projXLen;
-      const newProjYLen = projYLen * (1 + delta / 100);
+      const newProjYLen = projYLen * (1 + delta / 280);
       const newProjXLen = newProjYLen / ratio;
       // todo
       const deltaX = projXLen - newProjXLen;
