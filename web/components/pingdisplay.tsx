@@ -58,6 +58,10 @@ export function PingResultDisplay(props: {
     Record<string, Record<string, number>>
   >({});
 
+  const [mssMap, setMssMap] = useState<Record<string, Record<string, number>>>(
+    {}
+  );
+
   const [running, setRunning] = useState<boolean>(true);
 
   function launchStream(): [
@@ -99,6 +103,17 @@ export function PingResultDisplay(props: {
             [sampleTarget]: {
               ...(prev[sampleTarget] || {}),
               [sampleFrom]: sampleLatency,
+            },
+          }));
+        }
+
+        const mss = sample.mss;
+        if (mss !== undefined && mss !== null) {
+          setMssMap((prev) => ({
+            ...prev,
+            [sampleTarget]: {
+              ...(prev[sampleTarget] || {}),
+              [sampleFrom]: mss,
             },
           }));
         }
@@ -197,6 +212,7 @@ export function PingResultDisplay(props: {
                 sources={sources}
                 rowLength={sources.length + 2}
                 latencyMap={latencyMap}
+                mssMap={mssMap}
               />
             ))}
           </TableBody>
@@ -320,8 +336,9 @@ function RowMap(props: {
   sources: string[];
   rowLength: number;
   latencyMap: Record<string, Record<string, number>>;
+  mssMap?: Record<string, Record<string, number>>;
 }) {
-  const { target, sources, rowLength, latencyMap } = props;
+  const { target, sources, rowLength, latencyMap, mssMap } = props;
   const [expanded, setExpanded] = useState<boolean>(false);
   const getLatency = (
     source: string,
@@ -406,18 +423,21 @@ function RowMap(props: {
         <TableCell>{target}</TableCell>
         {sources.map((source) => {
           const latency = getLatency(source, target);
+          const mss = mssMap?.[target]?.[source];
           return (
             <TableCell
               key={source}
               sx={{
-                color: getLatencyColor(latency),
                 fontWeight: 500,
                 minWidth: 100,
               }}
             >
-              {latency !== null && latency !== undefined
-                ? `${latency.toFixed(3)} ms`
-                : "—"}
+              <Box sx={{ color: getLatencyColor(latency) }}>
+                {latency !== null && latency !== undefined
+                  ? `${latency.toFixed(3)} ms`
+                  : "—"}
+              </Box>
+              {mss !== null && mss !== undefined && <Box>MSS={mss}</Box>}
             </TableCell>
           );
         })}

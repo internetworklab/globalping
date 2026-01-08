@@ -73,6 +73,9 @@ export type PingSample = {
   // in the unit of milliseconds
   latencyMs?: number;
 
+  // for receiving packets, the mss option value as announced by the peer
+  mss?: number;
+
   // the ttl of the sent packet, ttl must be present, even in the case of timeout
   ttl: number;
 
@@ -398,6 +401,7 @@ function pingSampleFromTCPEvent(
     ttl: ttl,
     seq: seq,
     peer: details?.Request?.DstIP ?? undefined,
+    mss: details?.ReceivedPkt?.MSS ?? undefined,
   };
 }
 
