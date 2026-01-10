@@ -230,6 +230,13 @@ type RawTCPPingEventDataDetails = {
 
     // for receiving packets, this would be the mss option value announced by the sender
     MSS?: number;
+
+    // for receiving packets, this would be the rdns of the peer (that is, the SrcIP)
+    PeerRDNS?: string[];
+    PeerASN?: string;
+    PeerISP?: string;
+    PeerLocation?: string;
+    PeerExactLocation?: ExactLocation;
   };
   RTT?: number; // in unit of nanoseconds
   SentTTL?: number; // ttl or hoplimit in the ip header that was sent
@@ -402,6 +409,11 @@ function pingSampleFromTCPEvent(
     seq: seq,
     peer: details?.Request?.DstIP ?? undefined,
     mss: details?.ReceivedPkt?.MSS ?? undefined,
+    peerRdns: details?.ReceivedPkt?.PeerRDNS?.[0] || undefined,
+    peerASN: details?.ReceivedPkt?.PeerASN ?? undefined,
+    peerISP: details?.ReceivedPkt?.PeerISP ?? undefined,
+    peerLocation: details?.ReceivedPkt?.PeerLocation ?? undefined,
+    peerExactLocation: details?.ReceivedPkt?.PeerExactLocation ?? undefined,
   };
 }
 
