@@ -81,6 +81,12 @@ export type PingSample = {
   // the ttl of the sent packet, ttl must be present, even in the case of timeout
   ttl: number;
 
+  // the ttl of the receiving packet
+  receivedTTL?: number;
+
+  // the size of the receiving packet
+  receivedSize?: number;
+
   // the seq of the sent packet, seq must be present, even in the case of timeout
   seq: number;
 
@@ -416,6 +422,8 @@ function pingSampleFromTCPEvent(
     target: target,
     latencyMs: details?.RTT ? details.RTT / 1000000 : undefined,
     ttl: ttl,
+    receivedTTL: details?.ReceivedPkt?.TTL ?? undefined,
+    receivedSize: details?.ReceivedPkt?.Size ?? undefined,
     seq: seq,
     peer: details?.Request?.DstIP ?? undefined,
     mss: details?.ReceivedPkt?.MSS ?? undefined,
@@ -453,6 +461,9 @@ function pingSampleFromEvent(event: RawPingEvent): PingSample | undefined {
   const peerRdnsLast =
     peerRdns && peerRdns.length > 0 ? peerRdns[peerRdns.length - 1] : undefined;
 
+  const receivedTTL =
+    raws && raws.length > 0 ? raws[raws.length - 1].TTL : undefined;
+
   return {
     isTimeout:
       raws === undefined ||
@@ -462,6 +473,9 @@ function pingSampleFromEvent(event: RawPingEvent): PingSample | undefined {
     target: target,
     latencyMs: latencyMs,
     ttl: ttl ?? 0,
+    receivedSize:
+      raws && raws.length > 0 ? raws[raws.length - 1].Size : undefined,
+    receivedTTL: receivedTTL,
     seq: seq,
     peer: peer,
     peerRdns: peerRdnsLast,

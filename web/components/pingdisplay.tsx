@@ -14,6 +14,10 @@ import {
   IconButton,
   Tooltip,
   Card,
+  Divider,
+  tooltipClasses,
+  styled,
+  TooltipProps,
 } from "@mui/material";
 import {
   CSSProperties,
@@ -86,7 +90,7 @@ function updateTableCellDataMap(
         mss: sample.mss,
       },
       latestSample: sample,
-      samples: [...newMap[sample.target][sample.from].samples, sample],
+      samples: [sample, ...newMap[sample.target][sample.from].samples],
     },
   };
   return newMap;
@@ -100,6 +104,7 @@ function getLatestDataFromMap(
   datum: PingSample | undefined | null;
   latency: number | undefined | null;
   mss: number | undefined | null;
+  historySamples: PingSample[];
 } {
   const data = map[target]?.[source];
   const latest = data?.latest;
@@ -107,6 +112,7 @@ function getLatestDataFromMap(
     datum: data?.latestSample,
     latency: latest?.latency,
     mss: latest?.mss,
+    historySamples: data?.samples ?? [],
   };
 }
 
@@ -368,16 +374,93 @@ function trimPrefix(fullNodeName: string): string {
   return fullNodeName.replace(/^[a-zA-Z0-9._-]+\//, "");
 }
 
-function ShowMoreDetails(props: { sample: PingSample }) {
-  const { sample } = props;
+function ShowMoreDetails(props: {
+  sample: PingSample;
+  historySamples: PingSample[];
+}) {
+  const { sample, historySamples } = props;
   return (
     <Box>
-      {sample.peer && <Box>Peer: {sample.peer}</Box>}
-      {sample.peerRdns && <Box>Peer RDNS: {sample.peerRdns}</Box>}
-      {sample.peerASN && <Box>Peer ASN: {sample.peerASN}</Box>}
+      <Box>
+        {sample.peer && <Box>Peer: {sample.peer}</Box>}
+        {sample.peerRdns && <Box>Peer RDNS: {sample.peerRdns}</Box>}
+        {sample.peerASN && <Box>Peer ASN: {sample.peerASN}</Box>}
+      </Box>
+      <Divider sx={{ margin: 1 }} orientation="horizontal"></Divider>
+      <Box
+        sx={{
+          marginTop: 1,
+          paddingTop: 1,
+          maxHeight: "200px",
+          overflow: "auto",
+          display: "flex",
+          flexDirection: "column-reverse",
+        }}
+      >
+        {historySamples.map((sample, idx) => (
+          <RenderPingSampleToText key={idx} sample={sample} />
+        ))}
+      </Box>
     </Box>
   );
 }
+
+function RenderPingSampleToText(props: {
+  sample: PingSample | undefined | null;
+}) {
+  const { sample } = props;
+  if (sample === undefined || sample === null) {
+    return <Fragment></Fragment>;
+  }
+  if (sample.isTimeout) {
+    const segs = ["Timeout:"];
+    if (sample.seq !== undefined && sample.seq !== null) {
+      segs.push(`seq=${sample.seq}`);
+    }
+    if (sample.ttl !== undefined && sample.ttl !== null) {
+      segs.push(`ttl=${sample.ttl}`);
+    }
+    return <Fragment>{segs.join(" ")}</Fragment>;
+  }
+  const segs: string[] = [];
+  if (sample.receivedSize !== undefined && sample.receivedSize !== null) {
+    segs.push(`${sample.receivedSize} bytes`);
+  }
+  if (sample.peer) {
+    if (sample.peerRdns) {
+      segs.push(`from ${sample.peerRdns} (${sample.peer}):`);
+    } else {
+      segs.push(`from ${sample.peer}:`);
+    }
+  }
+  if (sample.seq !== undefined && sample.seq !== null) {
+    segs.push(`seq=${sample.seq}`);
+  }
+  if (sample.receivedTTL !== undefined && sample.receivedTTL !== null) {
+    segs.push(`ttl=${sample.receivedTTL}`);
+  }
+  if (sample.mss !== undefined && sample.mss !== null) {
+    segs.push(`mss=${sample.mss}`);
+  }
+  if (sample.latencyMs !== undefined && sample.latencyMs !== null) {
+    segs.push(
+      `time=${sample.latencyMs
+        .toFixed(3)
+        .replace(/0+$/, "")
+        .replace(/\.$/, "")}ms`
+    );
+  }
+
+  return <Box>{segs.join(" ")}</Box>;
+}
+
+const CustomWidthTooltip = styled(({ className, ...props }: TooltipProps) => (
+  <Tooltip {...props} classes={{ popper: className }} />
+))({
+  [`& .${tooltipClasses.tooltip}`]: {
+    maxWidth: 700,
+  },
+});
 
 function RowMap(props: {
   target: string;
@@ -471,6 +554,7 @@ function RowMap(props: {
             latency,
             mss,
             datum: sample,
+            historySamples,
           } = getLatestDataFromMap(tableCellDataMap, target, source);
 
           return (
@@ -482,10 +566,13 @@ function RowMap(props: {
               }}
             >
               <Box>
-                <Tooltip
+                <CustomWidthTooltip
                   title={
                     sample ? (
-                      <ShowMoreDetails sample={sample} />
+                      <ShowMoreDetails
+                        sample={sample}
+                        historySamples={historySamples}
+                      />
                     ) : (
                       <Fragment></Fragment>
                     )
@@ -501,7 +588,7 @@ function RowMap(props: {
                       ? `${latency.toFixed(3)} ms`
                       : "—"}
                   </Box>
-                </Tooltip>
+                </CustomWidthTooltip>
               </Box>
               {mss !== null && mss !== undefined && <Box>MSS={mss}</Box>}
             </TableCell>
