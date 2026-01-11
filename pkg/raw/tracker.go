@@ -208,21 +208,6 @@ func (it *ICMPTracker) cleanupEntry(seq int) {
 	}
 }
 
-func (it *ICMPTracker) doHandleTimeout(ent *ICMPTrackerEntry) {
-	if it == nil || ent == nil {
-		return
-	}
-	if len(ent.ReceivedAt) > 0 {
-		return
-	}
-	it.ackedSeq++
-	if clone := ent.ReadonlyClone(); clone != nil {
-		go func(ent ICMPTrackerEntry) {
-			it.RecvEvC <- ent
-		}(*clone)
-	}
-}
-
 func (it *ICMPTracker) handleTimeout(seq int) {
 	requestCh, ok := <-it.serviceChan
 	if !ok {
@@ -236,8 +221,11 @@ func (it *ICMPTracker) handleTimeout(seq int) {
 			return fmt.Errorf("engine is closed")
 		}
 
-		if ent, ok := it.store[seq]; ok && ent != nil {
-			it.doHandleTimeout(ent)
+		if ent, ok := it.store[seq]; ok && ent != nil && len(ent.ReceivedAt) == 0 {
+			it.ackedSeq++
+			if clone := ent.ReadonlyClone(); clone != nil {
+				it.RecvEvC <- *clone
+			}
 		}
 		delete(it.store, seq)
 		return nil
