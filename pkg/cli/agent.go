@@ -76,6 +76,8 @@ type AgentCmd struct {
 	SupportTCP  bool `help:"Declare supportness for TCP-flavored ping" default:"false"`
 
 	IPInfoCacheValiditySecs int `help:"The validity of the IPInfo cache in seconds" default:"600"`
+
+	IP2LocationAPIEndpoint string `help:"APIEndpoint of IP2Location IPInfo provider" default:"https://api.ip2location.io/v2/"`
 }
 
 type PingHandler struct {
@@ -187,6 +189,28 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func getClearnetIPInfoAdapter(agentCmd *AgentCmd) (pkgipinfo.GeneralIPInfoAdapter, error) {
+	ip2LocationEndpoint := agentCmd.IP2LocationAPIEndpoint
+	ip2LocationAPIKey := os.Getenv("IP2LOCATION_API_KEY")
+	if ip2LocationEndpoint != "" && ip2LocationAPIKey != "" {
+		log.Printf("Using IP2Location API Service: %s", ip2LocationEndpoint)
+		ip2LocationIPInfoAdapter := pkgipinfo.NewIP2LocationIPInfoAdapter(ip2LocationEndpoint, ip2LocationAPIKey)
+		return ip2LocationIPInfoAdapter, nil
+	}
+
+	ipinfoLiteToken := os.Getenv("IPINFO_TOKEN")
+	if ipinfoLiteToken != "" {
+		log.Printf("Using IPInfo Lite API Service: %s", ipinfoLiteToken)
+		ipinfoLiteIPInfoAdapter, err := pkgipinfo.NewIPInfoAdapter(&ipinfoLiteToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create IPInfo Lite adapter: %v", err)
+		}
+		return ipinfoLiteIPInfoAdapter, nil
+	}
+
+	return nil, fmt.Errorf("no valid ipinfo provider found")
+}
+
 func (agentCmd *AgentCmd) Run() error {
 
 	ctx := context.TODO()
@@ -199,17 +223,16 @@ func (agentCmd *AgentCmd) Run() error {
 	counterStore.StartedTime.Set(float64(time.Now().Unix()))
 
 	ipinfoReg := pkgipinfo.NewIPInfoProviderRegistry()
-	var ipinfoToken *string = nil
-	if token := os.Getenv("IPINFO_TOKEN"); token != "" {
-		ipinfoToken = &token
-	}
-	classicIPInfoAdapter, err := pkgipinfo.NewIPInfoAdapter(ipinfoToken)
+
+	classicIPInfoAdapter, err := getClearnetIPInfoAdapter(agentCmd)
 	if err != nil {
 		log.Fatalf("failed to initialize IPInfo adapter: %v", err)
 	}
-	ipinfoReg.RegisterAdapter(classicIPInfoAdapter)
+	// skip registering named ipinfo providers to the registry,
+	// to prevent users from intentionally bypassing the (cached) auto ipinfo dispatcher.
+	// ipinfoReg.RegisterAdapter(classicIPInfoAdapter)
 	dn42IPInfoAdapter := pkgipinfo.NewDN42IPInfoAdapter(agentCmd.DN42IPInfoProvider)
-	ipinfoReg.RegisterAdapter(dn42IPInfoAdapter)
+	// ipinfoReg.RegisterAdapter(dn42IPInfoAdapter)
 	randomIPInfoAdapter := pkgipinfo.NewRandomIPInfoAdapter()
 	ipinfoReg.RegisterAdapter(randomIPInfoAdapter)
 

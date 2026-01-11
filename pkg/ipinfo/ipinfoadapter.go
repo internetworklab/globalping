@@ -45,7 +45,15 @@ type BasicIPInfo struct {
 	ASN      string
 	Location string
 	ISP      string
-	Exact    *ExactLocation
+
+	// country is optional
+	Country *string
+	// region is optional
+	Region *string
+	// city is optional
+	City *string
+	// exact location is optional
+	Exact *ExactLocation
 }
 
 type GeneralIPInfoAdapter interface {
