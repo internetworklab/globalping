@@ -11,20 +11,21 @@ import (
 )
 
 type CounterStore struct {
-	StartedTime       prometheus.Gauge
-	ServedDurationMs  *prometheus.CounterVec
-	NumRequestsServed *prometheus.CounterVec
-	NumPktsSent       *prometheus.CounterVec
-	NumPktsReceived   *prometheus.CounterVec
-	NumBytesSent      *prometheus.CounterVec
-	NumBytesReceived  *prometheus.CounterVec
-	IPInfoRequests    *prometheus.CounterVec
+	StartedTime            prometheus.Gauge
+	ServedDurationMs       *prometheus.CounterVec
+	NumRequestsServed      *prometheus.CounterVec
+	NumPktsSent            *prometheus.CounterVec
+	NumPktsReceived        *prometheus.CounterVec
+	NumBytesSent           *prometheus.CounterVec
+	NumBytesReceived       *prometheus.CounterVec
+	IPInfoRequests         *prometheus.CounterVec
+	IPInfoServedDurationMs *prometheus.CounterVec
 }
 
 const (
-	PromLabelFrom   = "from"
-	PromLabelTarget = "target"
-	PromLabelClient = "client"
+	PromLabelFrom     = "from"
+	PromLabelTarget   = "target"
+	PromLabelClient   = "client"
 	PromLabelCacheHit = "cachehit"
 	PromLabelHasError = "haserror"
 )
@@ -106,12 +107,23 @@ func NewCounterStore() *CounterStore {
 		log.Printf("NumBytesReceived might have been already registered: %v", err)
 	}
 
+	cs.IPInfoServedDurationMs = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "globalping_ipinfo_served_duration_ms",
+			Help: "The duration of the IPInfo requests served by the globalping system",
+		},
+		commonLabels,
+	)
+	if err := prometheus.Register(cs.IPInfoServedDurationMs); err != nil {
+		log.Printf("IPInfoServedDurationMs might have been already registered: %v", err)
+	}
+
 	cs.IPInfoRequests = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "globalping_num_ipinfo_requests",
 			Help: "The number of IPInfo requests made by the globalping system",
 		},
-		append(commonLabels, PromLabelCacheHit),
+		append(commonLabels, PromLabelCacheHit, PromLabelHasError),
 	)
 	if err := prometheus.Register(cs.IPInfoRequests); err != nil {
 		log.Printf("IPInfoRequests might have been already registered: %v", err)

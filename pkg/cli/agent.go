@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -74,7 +75,7 @@ type AgentCmd struct {
 	SupportPMTU bool `help:"Declare supportness for PMTU discovery" default:"false"`
 	SupportTCP  bool `help:"Declare supportness for TCP-flavored ping" default:"false"`
 
-	IPInfoCacheValiditySecs int `help:"The validity of the IPInfo cache in seconds" default:"60"`
+	IPInfoCacheValiditySecs int `help:"The validity of the IPInfo cache in seconds" default:"600"`
 }
 
 type PingHandler struct {
@@ -217,14 +218,16 @@ func (agentCmd *AgentCmd) Run() error {
 	}
 	autoIPInfoDispatcher.SetUpDefaultRoutes(dn42IPInfoAdapter, classicIPInfoAdapter)
 
-	ipinfoCacheHook := func(ctx context.Context, ip string, cacheHit bool, hasError bool) {
+	ipinfoCacheHook := func(ctx context.Context, stats pkgipinfo.IPInfoRequestStats) {
 		// will remove this logging code later
-		log.Printf("[dbg] IPInfo Request for ip: %s, cacheHit: %t, hasError: %t", ip, cacheHit, hasError)
+		// log.Printf("[dbg] IPInfo Request for ip: %s, cacheHit: %t, hasError: %t, durationMs: %f", stats.IP, stats.CacheHit, stats.HasError, stats.DurationMs)
 
 		commonLabels := ctx.Value(pkgutils.CtxKeyPromCommonLabels).(prometheus.Labels)
-		commonLabels[pkgmyprom.PromLabelCacheHit] = strconv.FormatBool(cacheHit)
-		commonLabels[pkgmyprom.PromLabelHasError] = strconv.FormatBool(hasError)
-		counterStore.IPInfoRequests.With(commonLabels).Add(1.0)
+		counterStore.IPInfoServedDurationMs.With(commonLabels).Add(stats.DurationMs)
+		ipinfoRequestLabels := maps.Clone(commonLabels)
+		ipinfoRequestLabels[pkgmyprom.PromLabelCacheHit] = strconv.FormatBool(stats.CacheHit)
+		ipinfoRequestLabels[pkgmyprom.PromLabelHasError] = strconv.FormatBool(stats.HasError)
+		counterStore.IPInfoRequests.With(ipinfoRequestLabels).Add(1.0)
 	}
 	ipinfoCacheValidity := time.Duration(agentCmd.IPInfoCacheValiditySecs) * time.Second
 	log.Printf("IPInfo cache validity: %s", ipinfoCacheValidity.String())

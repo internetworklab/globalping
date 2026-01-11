@@ -23,7 +23,13 @@ func (entry *IPInfoCacheEntry) Less(other btree.Item) bool {
 	return strings.Compare(entry.Key, otherEntry.Key) < 0
 }
 
-type RequestLoggerHook func(ctx context.Context, ip string, cacheHit bool, hasError bool)
+type IPInfoRequestStats struct {
+	IP         string
+	CacheHit   bool
+	HasError   bool
+	DurationMs float64
+}
+type RequestLoggerHook func(ctx context.Context, stats IPInfoRequestStats)
 
 type CacheIPInfoProvider struct {
 	Upstream      GeneralIPInfoAdapter
@@ -73,27 +79,7 @@ func (ch *CacheIPInfoProvider) GetName() string {
 }
 
 func (ch *CacheIPInfoProvider) getCache(ctx context.Context, ip string) (*BasicIPInfo, error) {
-	serviceSubmitter, ok := <-ch.serviceChan
-	if !ok {
-		return nil, fmt.Errorf("cache is closed")
-	}
-
-	storeChan := make(chan *btree.BTree, 1)
-
-	serviceAccess := CacheStoreAccess{
-		Fn: func(ctx context.Context) error {
-			storeChan <- ch.store
-			return nil
-		},
-		Error: make(chan error, 1),
-	}
-	serviceSubmitter <- serviceAccess
-	store := <-storeChan
-	if err := <-serviceAccess.Error; err != nil {
-		return nil, fmt.Errorf("failed to get ipinfo for %s from cache: failed to obtain store reference: %v", ip, err)
-	}
-
-	if item := store.Get(&IPInfoCacheEntry{Key: ip}); item != nil {
+	if item := ch.store.Get(&IPInfoCacheEntry{Key: ip}); item != nil {
 		if cacheEntry, ok := item.(*IPInfoCacheEntry); ok {
 			if cacheEntry.ExpiresAt.After(time.Now()) {
 				return cacheEntry.Value, nil
@@ -134,6 +120,11 @@ func (ch *CacheIPInfoProvider) updateCache(ctx context.Context, ip string, resul
 		ExpiresAt: time.Now().Add(ch.maxExpireTime),
 	})
 
+	serviceAccessSubmitter, ok = <-ch.serviceChan
+	if !ok {
+		return fmt.Errorf("cache is closed")
+	}
+
 	serviceAccess = CacheStoreAccess{
 		Fn: func(ctx context.Context) error {
 			ch.store = clonedStore
@@ -151,30 +142,30 @@ func (ch *CacheIPInfoProvider) updateCache(ctx context.Context, ip string, resul
 
 func (ch *CacheIPInfoProvider) GetIPInfo(ctx context.Context, ip string) (*BasicIPInfo, error) {
 
-	cacheHit := new(bool)
-	*cacheHit = false
+	startedAt := time.Now()
+	stats := new(IPInfoRequestStats)
+	stats.IP = ip
 
-	cacheErrored := new(bool)
-	*cacheErrored = false
-
-	defer func(cacheHit *bool, hasError *bool) {
-		ch.hook(ctx, ip, *cacheHit, *hasError)
-	}(cacheHit, cacheErrored)
+	defer func(stats *IPInfoRequestStats) {
+		durationMs := time.Since(startedAt).Milliseconds()
+		stats.DurationMs = float64(durationMs)
+		ch.hook(ctx, *stats)
+	}(stats)
 
 	cached, err := ch.getCache(ctx, ip)
 	if err != nil {
-		*cacheErrored = true
+		stats.HasError = true
 		return nil, fmt.Errorf("failed to get ipinfo for %s from cache: %v", ip, err)
 	}
 
 	if cached != nil {
-		*cacheHit = true
+		stats.CacheHit = true
 		return cached, nil
 	}
 
 	result, err := ch.Upstream.GetIPInfo(ctx, ip)
 	if err != nil {
-		*cacheErrored = true
+		stats.HasError = true
 		return nil, err
 	}
 	if result == nil {
