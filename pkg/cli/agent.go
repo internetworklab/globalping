@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -72,6 +73,8 @@ type AgentCmd struct {
 	SupportUDP  bool `help:"Declare supportness for UDP traceroute" default:"false"`
 	SupportPMTU bool `help:"Declare supportness for PMTU discovery" default:"false"`
 	SupportTCP  bool `help:"Declare supportness for TCP-flavored ping" default:"false"`
+
+	IPInfoCacheValiditySecs int `help:"The validity of the IPInfo cache in seconds" default:"60"`
 }
 
 type PingHandler struct {
@@ -140,9 +143,9 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var pinger pkgpinger.Pinger = nil
 	if pingRequest.L4PacketType != nil && *pingRequest.L4PacketType == pkgpinger.L4ProtoTCP {
 		tcpingPinger := &pkgpinger.TCPSYNPinger{
-			PingRequest:  pingRequest,
+			PingRequest:   pingRequest,
 			IPInfoAdapter: ipinfoAdapter,
-			RespondRange: ph.RespondRange,
+			RespondRange:  ph.RespondRange,
 			OnSent: func(ctx context.Context, srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, nBytes int) {
 				counterStore.NumBytesSent.With(commonLabels).Add(float64(nBytes))
 			},
@@ -213,7 +216,21 @@ func (agentCmd *AgentCmd) Run() error {
 		Router: pkgrouting.NewSimpleRouter(),
 	}
 	autoIPInfoDispatcher.SetUpDefaultRoutes(dn42IPInfoAdapter, classicIPInfoAdapter)
-	ipinfoReg.RegisterAdapter(autoIPInfoDispatcher)
+
+	ipinfoCacheHook := func(ctx context.Context, ip string, cacheHit bool, hasError bool) {
+		// will remove this logging code later
+		log.Printf("[dbg] IPInfo Request for ip: %s, cacheHit: %t, hasError: %t", ip, cacheHit, hasError)
+
+		commonLabels := ctx.Value(pkgutils.CtxKeyPromCommonLabels).(prometheus.Labels)
+		commonLabels[pkgmyprom.PromLabelCacheHit] = strconv.FormatBool(cacheHit)
+		commonLabels[pkgmyprom.PromLabelHasError] = strconv.FormatBool(hasError)
+		counterStore.IPInfoRequests.With(commonLabels).Add(1.0)
+	}
+	ipinfoCacheValidity := time.Duration(agentCmd.IPInfoCacheValiditySecs) * time.Second
+	log.Printf("IPInfo cache validity: %s", ipinfoCacheValidity.String())
+	cachedAutoIPInfoDispatcher := pkgipinfo.NewCacheIPInfoProvider(autoIPInfoDispatcher, ipinfoCacheValidity, ipinfoCacheHook)
+	cachedAutoIPInfoDispatcher.Run(ctx)
+	ipinfoReg.RegisterAdapter(cachedAutoIPInfoDispatcher)
 
 	customCAs, err := pkgutils.NewCustomCAPool(agentCmd.PeerCAs)
 	if err != nil {

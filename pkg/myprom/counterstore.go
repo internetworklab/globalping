@@ -18,12 +18,15 @@ type CounterStore struct {
 	NumPktsReceived   *prometheus.CounterVec
 	NumBytesSent      *prometheus.CounterVec
 	NumBytesReceived  *prometheus.CounterVec
+	IPInfoRequests    *prometheus.CounterVec
 }
 
 const (
 	PromLabelFrom   = "from"
 	PromLabelTarget = "target"
 	PromLabelClient = "client"
+	PromLabelCacheHit = "cachehit"
+	PromLabelHasError = "haserror"
 )
 
 func NewCounterStore() *CounterStore {
@@ -101,6 +104,17 @@ func NewCounterStore() *CounterStore {
 	)
 	if err := prometheus.Register(cs.NumBytesReceived); err != nil {
 		log.Printf("NumBytesReceived might have been already registered: %v", err)
+	}
+
+	cs.IPInfoRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "globalping_num_ipinfo_requests",
+			Help: "The number of IPInfo requests made by the globalping system",
+		},
+		append(commonLabels, PromLabelCacheHit),
+	)
+	if err := prometheus.Register(cs.IPInfoRequests); err != nil {
+		log.Printf("IPInfoRequests might have been already registered: %v", err)
 	}
 
 	return cs
