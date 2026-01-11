@@ -14,7 +14,7 @@ import worldMapAny from "./worldmap.json";
 import { Box, Tooltip } from "@mui/material";
 
 // format: [longitude, latitude]
-type LonLat = number[];
+export type LonLat = number[];
 
 type Polygon = LonLat[];
 

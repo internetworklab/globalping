@@ -15,14 +15,21 @@ import {
   Tooltip,
   IconButton,
 } from "@mui/material";
-import { Fragment, useEffect, useRef, useState } from "react";
+import {
+  CSSProperties,
+  Fragment,
+  ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { TaskCloseIconButton } from "@/components/taskclose";
 import { StopButton } from "./playpause";
 import { getLatencyColor } from "./colorfunc";
 import { IPDisp } from "./ipdisp";
 import { generatePingSampleStream, PingSample } from "@/apis/globalping";
 import { PendingTask } from "@/apis/types";
-import { useCanvasSizing, WorldMap } from "./worldmap";
+import { LonLat, Marker, useCanvasSizing, WorldMap } from "./worldmap";
 import MapIcon from "@mui/icons-material/Map";
 
 type TracerouteIPEntry = {
@@ -65,6 +72,7 @@ type HopEntryState = {
 type TabState = {
   maxHop: number;
   hopEntries: Record<number, HopEntryState>;
+  markers: Marker[];
 };
 type PageState = Record<string, TabState>;
 
@@ -96,10 +104,27 @@ function getMedian(history: number[]): number {
 }
 
 function updateHopEntryState(
-  hopEntryState: HopEntryState,
+  hopEntryState: HopEntryState | undefined | null,
   pingSample: PingSample
 ): HopEntryState {
-  const newEntry = { ...hopEntryState };
+  const newEntry = {
+    ...(hopEntryState ?? {
+      peers: [],
+      rtts: {
+        current: 0,
+        min: Infinity,
+        median: 0,
+        max: -Infinity,
+        history: [],
+      },
+      stats: {
+        sent: 0,
+        replied: 0,
+        lost: 0,
+      },
+    }),
+  };
+
   if (pingSample.latencyMs !== undefined && pingSample.latencyMs !== null) {
     newEntry.rtts.current = pingSample.latencyMs;
     if (pingSample.latencyMs < newEntry.rtts.min) {
@@ -146,58 +171,62 @@ function updateHopEntryState(
   return newEntry;
 }
 
-function updateTabState(tabState: TabState, pingSample: PingSample): TabState {
-  const newTabState = { ...tabState };
+function updateTabState(
+  tabState: TabState | undefined | null,
+  pingSample: PingSample
+): TabState {
+  const newTabState = {
+    ...(tabState ?? {
+      maxHop: 1,
+      hopEntries: {},
+      markers: [],
+    }),
+  };
 
-  if (pingSample.ttl !== undefined && pingSample.ttl !== null) {
-    newTabState.hopEntries = {
-      ...newTabState.hopEntries,
-      [pingSample.ttl]: updateHopEntryState(
-        newTabState.hopEntries[pingSample.ttl] ?? {
-          peers: [],
-          rtts: {
-            current: 0,
-            min: Infinity,
-            median: 0,
-            max: -Infinity,
-            history: [],
-          },
-          stats: {
-            sent: 0,
-            replied: 0,
-            lost: 0,
-          },
-        },
-        pingSample
-      ),
-    };
-    if (pingSample.lastHop) {
-      newTabState.maxHop = pingSample.ttl;
-    }
+  newTabState.hopEntries = updateHopEntries(
+    newTabState,
+    pingSample,
+    newTabState.hopEntries
+  );
+
+  newTabState.markers = updateMarkers(
+    newTabState,
+    pingSample,
+    newTabState.markers
+  );
+
+  if (pingSample.lastHop) {
+    newTabState.maxHop = pingSample.ttl;
   }
 
   return newTabState;
+}
+
+function updateHopEntries(
+  tabState: TabState,
+  pingSample: PingSample,
+  hopEntries: Record<number, HopEntryState>
+): Record<number, HopEntryState> {
+  const newHopEntries: Record<number, HopEntryState> = { ...hopEntries };
+
+  if (pingSample.ttl !== undefined && pingSample.ttl !== null) {
+    newHopEntries[pingSample.ttl] = updateHopEntryState(
+      newHopEntries[pingSample.ttl],
+      pingSample
+    );
+  }
+
+  return newHopEntries;
 }
 
 function updatePageState(
   pageState: PageState,
   pingSample: PingSample
 ): PageState {
-  // debugger;
-  const newState = { ...pageState };
-
-  if (!(pingSample.from in newState)) {
-    newState[pingSample.from] = {
-      maxHop: 1,
-      hopEntries: {},
-    };
-  }
-
-  newState[pingSample.from] = updateTabState(
-    newState[pingSample.from],
-    pingSample
-  );
-  return newState;
+  return {
+    ...pageState,
+    [pingSample.from]: updateTabState(pageState[pingSample.from], pingSample),
+  };
 }
 
 type DisplayEntry = {
@@ -241,6 +270,63 @@ function getDispEntries(
     }
   }
   return dispEntries;
+}
+
+function updateMarkers(
+  tabState: TabState,
+  pingSample: PingSample,
+  markers: Marker[] | undefined | null
+): Marker[] {
+  const newMarkers: Marker[] = [...(markers ?? [])];
+
+  const ttl = pingSample.ttl;
+  if (ttl === undefined || ttl === null) {
+    return newMarkers;
+  }
+
+  const exact = pingSample.peerExactLocation;
+  if (exact === undefined || exact === null) {
+    return newMarkers;
+  }
+
+  const lon = exact.Longitude;
+  const lat = exact.Latitude;
+  if (lon === undefined || lon === null || lat === undefined || lat === null) {
+    return newMarkers;
+  }
+
+  const rtt = pingSample.latencyMs;
+  if (rtt === undefined || rtt === null) {
+    return newMarkers;
+  }
+
+  const lonLat: LonLat = [lon, lat];
+  const fill = getLatencyColor(rtt);
+  const radius = 2000;
+  const strokeWidth = 800;
+  const stroke: CSSProperties["stroke"] = "white";
+  const tooltip: ReactNode = (
+    <Box>
+      <Box>TTL:&nbsp;{ttl}</Box>
+      <Box>IP:&nbsp;{pingSample.peer}</Box>
+      {pingSample.peerRdns && <Box>RDNS:&nbsp;{pingSample.peerRdns}</Box>}
+    </Box>
+  );
+  const index = `${ttl}-${pingSample.peer}`;
+
+  const newMarker: Marker = {
+    lonLat,
+    fill,
+    radius,
+    strokeWidth,
+    stroke,
+    tooltip,
+    index,
+  };
+
+  newMarkers.push(newMarker);
+
+  return newMarkers;
 }
 
 export function TracerouteResultDisplay(props: {
@@ -407,52 +493,7 @@ export function TracerouteResultDisplay(props: {
             canvasWidth={canvasW}
             canvasHeight={canvasH}
             fill="lightblue"
-            markers={
-              [
-                // {
-                //   lonLat: [120.585, 31.299],
-                //   fill: colorGreen,
-                //   radius: 2000,
-                //   strokeWidth: 800,
-                //   stroke: "white",
-                //   tooltip: (
-                //     <Box>
-                //       <Box>TTL:&nbsp;1</Box>
-                //       <Box>shanghai.example.com</Box>
-                //     </Box>
-                //   ),
-                //   index: "1",
-                // },
-                // {
-                //   lonLat: [114.177, 22.319],
-                //   fill: colorGreen,
-                //   radius: 2000,
-                //   strokeWidth: 800,
-                //   stroke: "white",
-                //   tooltip: (
-                //     <Box>
-                //       <Box>TTL:&nbsp;2</Box>
-                //       <Box>hongkong.example.com</Box>
-                //     </Box>
-                //   ),
-                //   index: "2",
-                // },
-                // {
-                //   lonLat: [-118.408, 33.942],
-                //   fill: colorYellow,
-                //   radius: 2000,
-                //   strokeWidth: 800,
-                //   stroke: "white",
-                //   tooltip: (
-                //     <Box>
-                //       <Box>TTL:&nbsp;3</Box>
-                //       <Box>lax.example.com</Box>
-                //     </Box>
-                //   ),
-                //   index: "3",
-                // },
-              ]
-            }
+            markers={showMap ? pageState?.[tabValue]?.markers ?? [] : []}
           />
         )}
 
