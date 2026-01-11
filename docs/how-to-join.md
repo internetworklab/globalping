@@ -103,6 +103,12 @@ Obtain your IPinfo Lite API token first, please access https://ipinfo.io/dashboa
 echo "IPINFO_TOKEN=<your-ipinfo-lite-api-token>" >> .env
 ```
 
+Obtain your IP2Location Free-tier API Key, then
+
+```shell
+echo "IP2LOCATION_API_KEY=<your-ip2location-api-key>" >> .env
+```
+
 Build and start globalping binary, and serving as an agent:
 
 ```shell
@@ -111,6 +117,8 @@ nodename=<your-node-name>
 http_endpoint=<public_http_endpoint_that_can_reach_your_globalping_agent> # for example: https://yournode.yourdomain.com:18081, would be affected by --tls-listen-address parameter as well
 
 peer_ca=https://github.com/internetworklab/globalping/raw/refs/heads/master/confed/hub/ca.pem
+
+EXACT_LOCATION_LAT_LON=$(curl -s https://ipinfo.io | jq -r '.loc')
 
 bin/globalping agent \
   --server-address=wss://globalping-hub.exploro.one:8080/ws \
@@ -126,7 +134,12 @@ bin/globalping agent \
   --respond-range 172.20.0.0/14 \
   --respond-range fd00::/8 \
   --respond-range 10.127.0.0/16 \
-  --metrics-listen-address="127.0.0.1:2112"
+  --metrics-listen-address="127.0.0.1:2112" \
+  --exact-location-lat-lon=${EXACT_LOCATION_LAT_LON} \
+  --support-udp=true \
+  --support-pmtu=true \
+  --support-tcp=true \
+  --ip-2-location-api-endpoint=https://api.ip2location.io 
 ```
 
 By default, the agent use default public endpoint ":2112" to expose prometheus metrics, if you don't like it to be public, just change it to
