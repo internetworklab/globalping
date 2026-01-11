@@ -379,12 +379,24 @@ function ShowMoreDetails(props: {
   historySamples: PingSample[];
 }) {
   const { sample, historySamples } = props;
+  const lat = sample.peerExactLocation?.Latitude;
+  const lon = sample.peerExactLocation?.Longitude;
   return (
     <Box>
       <Box>
         {sample.peer && <Box>Peer: {sample.peer}</Box>}
-        {sample.peerRdns && <Box>Peer RDNS: {sample.peerRdns}</Box>}
-        {sample.peerASN && <Box>Peer ASN: {sample.peerASN}</Box>}
+        {sample.peerRdns && <Box>RDNS: {sample.peerRdns}</Box>}
+        {sample.peerASN && <Box>ASN: {sample.peerASN}</Box>}
+        {sample.peerISP && <Box>ISP: {sample.peerISP}</Box>}
+        {sample.peerLocation && <Box>Location: {sample.peerLocation}</Box>}
+        {lat !== undefined &&
+          lat !== null &&
+          lon !== undefined &&
+          lon !== null && (
+            <Box>
+              LatLon: {lat}, {lon}
+            </Box>
+          )}
       </Box>
       <Divider sx={{ margin: 1 }} orientation="horizontal"></Divider>
       <Box
