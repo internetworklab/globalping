@@ -26,6 +26,11 @@ func (autoProvider *AutoIPInfoDispatcher) SetUpDefaultRoutes(
 	autoProvider.AddRoute(neoNet, dn42Provider)
 	autoProvider.AddRoute(ianaNet, internetIPInfoProvider)
 	autoProvider.AddRoute(ianaNet6, internetIPInfoProvider)
+
+	rfc1918IPInfoAdapter := &RFC1918IPInfoAdapter{}
+	autoProvider.AddRoute("10.0.0.0/8", rfc1918IPInfoAdapter)
+	autoProvider.AddRoute("172.16.0.0/12", rfc1918IPInfoAdapter)
+	autoProvider.AddRoute("192.168.0.0/16", rfc1918IPInfoAdapter)
 }
 
 func (autoProvider *AutoIPInfoDispatcher) AddRoute(prefix string, provider GeneralIPInfoAdapter) {

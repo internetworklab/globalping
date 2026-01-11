@@ -67,27 +67,27 @@ func (ia *IP2LocationIPInfoAdapter) GetIPInfo(ctx context.Context, ip string) (*
 	}
 
 	basicInfo := new(BasicIPInfo)
-	if respObj.AS != nil && *respObj.AS != "" {
+	if respObj.AS != nil && *respObj.AS != "" && *respObj.AS != "-" {
 		basicInfo.ISP = *respObj.AS
 	}
-	if respObj.ASN != nil && *respObj.ASN != "" {
+	if respObj.ASN != nil && *respObj.ASN != "" && *respObj.ASN != "-" {
 		basicInfo.ASN = *respObj.ASN
 		if !strings.HasPrefix(basicInfo.ASN, "AS") {
 			basicInfo.ASN = "AS" + basicInfo.ASN
 		}
 	}
 	locations := make([]string, 0)
-	if respObj.CityName != nil && *respObj.CityName != "" {
+	if respObj.CityName != nil && *respObj.CityName != "" && *respObj.CityName != "-" {
 		locations = append(locations, *respObj.CityName)
 		basicInfo.City = new(string)
 		*basicInfo.City = *respObj.CityName
 	}
-	if respObj.RegionName != nil && *respObj.RegionName != "" {
+	if respObj.RegionName != nil && *respObj.RegionName != "" && *respObj.RegionName != "-" {
 		locations = append(locations, *respObj.RegionName)
 		basicInfo.Region = new(string)
 		*basicInfo.Region = *respObj.RegionName
 	}
-	if respObj.CountryName != nil && *respObj.CountryName != "" {
+	if respObj.CountryName != nil && *respObj.CountryName != "" && *respObj.CountryName != "-" {
 		locations = append(locations, *respObj.CountryName)
 		basicInfo.Country = new(string)
 		*basicInfo.Country = *respObj.CountryName
