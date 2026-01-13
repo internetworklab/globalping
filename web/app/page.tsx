@@ -14,6 +14,7 @@ import {
   IconButton,
   Checkbox,
   FormGroup,
+  Link,
 } from "@mui/material";
 import { CSSProperties, Fragment, useState } from "react";
 import { SourcesSelector } from "@/components/sourceselector";
@@ -107,6 +108,7 @@ export default function Home() {
   }
 
   const repoAddr = process.env["NEXT_PUBLIC_GITHUB_REPO"];
+  const dn42GeoIPRepo = process.env["NEXT_PUBLIC_DN42_GEOIP_REPO"];
 
   return (
     <Box sx={containerStyles}>
@@ -132,15 +134,32 @@ export default function Home() {
                 <Typography variant="h6">MyGlobalping</Typography>
               </Box>
               <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                {repoAddr !== "" && (
-                  <Tooltip title="Go to Github Page">
-                    <IconButton
-                      onClick={() => {
-                        window.open(repoAddr, "_blank");
-                      }}
+                {!!dn42GeoIPRepo && (
+                  <Tooltip title="Go visit DN42 GeoIP Project">
+                    <Link
+                      underline="hover"
+                      href={dn42GeoIPRepo}
+                      target="_blank"
+                      variant="caption"
+                      sx={{ display: "flex", alignItems: "center", gap: 1 }}
                     >
+                      DN42GeoIP
                       <GitHubIcon />
-                    </IconButton>
+                    </Link>
+                  </Tooltip>
+                )}
+                {repoAddr !== "" && (
+                  <Tooltip title="Go to Project's Github Page">
+                    <Link
+                      underline="hover"
+                      href={repoAddr}
+                      target="_blank"
+                      variant="caption"
+                      sx={{ display: "flex", alignItems: "center", gap: 1 }}
+                    >
+                      Project
+                      <GitHubIcon />
+                    </Link>
                   </Tooltip>
                 )}
 
