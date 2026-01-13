@@ -131,15 +131,16 @@ bin/globalping agent \
   --server-cert=confed/$nickname/$nodename.pem \
   --server-cert-key=confed/$nickname/$nodename-key.pem \
   --tls-listen-address=:18081 \
-  --respond-range 172.20.0.0/14 \
-  --respond-range fd00::/8 \
-  --respond-range 10.127.0.0/16 \
-  --metrics-listen-address="127.0.0.1:2112" \
+  --respond-range=172.20.0.0/14 \
+  --respond-range=fd00::/8 \
+  --respond-range=10.127.0.0/16 \
+  --metrics-listen-address=127.0.0.1:2112 \
   --exact-location-lat-lon=${EXACT_LOCATION_LAT_LON} \
   --support-udp=true \
   --support-pmtu=true \
   --support-tcp=true \
-  --ip-2-location-api-endpoint=https://api.ip2location.io 
+  --ip-2-location-api-endpoint=https://api.ip2location.io \
+  --dn-42-ip-2-location-api-endpoint=https://regquery.ping2.sh/ip2location/v1/query
 ```
 
 By default, the agent use default public endpoint ":2112" to expose prometheus metrics, if you don't like it to be public, just change it to
