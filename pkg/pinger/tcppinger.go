@@ -58,6 +58,29 @@ func (pinger *TCPSYNPinger) getHostAndPort(ctx context.Context) (net.IP, int, er
 	return dstIP, dstPort, nil
 }
 
+func postProcessReceivedPkt(ctx context.Context, receivedPkt *pkgtcping.PacketInfo, resolver *net.Resolver, ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter) (*pkgtcping.PacketInfo, error) {
+	if receivedPkt == nil {
+		return nil, nil
+	}
+
+	var err error
+	receivedPkt, err = receivedPkt.ResolveRDNS(ctx, resolver)
+	if err != nil {
+		if _, ok := err.(*net.DNSError); !ok {
+			return receivedPkt, fmt.Errorf("failed to resolve rdns for %s: %v", receivedPkt.SrcIP.String(), err)
+		}
+	}
+
+	if ipinfoAdapter != nil {
+		receivedPkt, err = receivedPkt.ResolveIPInfo(ctx, ipinfoAdapter)
+		if err != nil {
+			return receivedPkt, fmt.Errorf("failed to resolve ip info for %s: %v", receivedPkt.SrcIP.String(), err)
+		}
+	}
+
+	return receivedPkt, nil
+}
+
 func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 	// pre-allocate 1 slot for error reporting, so that it can exit once there is an error
 	evCh := make(chan PingEvent, 1)
@@ -98,90 +121,6 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 
 		resolver := pkgutils.NewCustomResolver(pinger.PingRequest.Resolver, 10*time.Second)
 
-		allConfirmedCh := make(chan bool, 1)
-		go func(ctx context.Context) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case event, ok := <-tracker.EventC:
-					if !ok {
-						return
-					}
-
-					if event.Type == pkgtcping.TrackerEVReceived || event.Type == pkgtcping.TrackerEVTimeout {
-						if event.Type == pkgtcping.TrackerEVReceived {
-							if pinger.OnReceived != nil {
-								if receivedPkt := event.Details.ReceivedPkt; receivedPkt != nil {
-									clonedPkt, err := receivedPkt.ResolveRDNS(ctx, resolver)
-									if err != nil {
-										log.Printf("failed to resolve rdns for %s: %v", receivedPkt.SrcIP.String(), err)
-									}
-									if clonedPkt != nil {
-										receivedPkt = clonedPkt
-									}
-
-									if pinger.IPInfoAdapter != nil {
-										clonedPkt, err = receivedPkt.ResolveIPInfo(ctx, pinger.IPInfoAdapter)
-										if err != nil {
-											log.Printf("failed to resolve ip info for %s: %v", receivedPkt.SrcIP.String(), err)
-										}
-										if clonedPkt != nil {
-											receivedPkt = clonedPkt
-										}
-									}
-
-									pinger.OnReceived(
-										ctx,
-										receivedPkt.SrcIP,
-										int(receivedPkt.TCP.SrcPort),
-										receivedPkt.DstIP,
-										int(receivedPkt.TCP.DstPort),
-										receivedPkt.Size,
-									)
-
-									event.Details.ReceivedPkt = receivedPkt
-								}
-							}
-						}
-
-						evCh <- PingEvent{Data: event}
-
-						if totalPkts := pinger.PingRequest.TotalPkts; totalPkts != nil {
-							if *totalPkts == event.Details.Seq+1 {
-								allConfirmedCh <- true
-								return
-							}
-						}
-
-					}
-				}
-			}
-		}(ctx)
-
-		go func(ctx context.Context) {
-			rbCh := sender.GetPackets()
-			requireSYN := true
-			requireACK := true
-			filteredCh := pkgtcping.FilterPackets(rbCh, &pkgtcping.FilterRequirements{
-				SYN:     &requireSYN,
-				ACK:     &requireACK,
-				SrcPort: &dstPort,
-			})
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case pktInfo, ok := <-filteredCh:
-					if !ok {
-						return
-					}
-					tracker.MarkReceived(pktInfo)
-				}
-			}
-		}(ctx)
-
 		intvMs := pinger.PingRequest.IntvMilliseconds
 		ticker := time.NewTicker(time.Duration(intvMs) * time.Millisecond)
 
@@ -189,10 +128,76 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 		pktTimeout := time.Duration(pktTimeoutMs) * time.Millisecond
 
 		defer ticker.Stop()
+		allConfirmedCh := make(chan interface{})
+		defer func() {
+			log.Printf("Waiting for all un-acked tcp syn packets to be acked")
+			<-allConfirmedCh
+			log.Printf("All un-acked tcp syn packets are acked")
+		}()
+
+		go func() {
+			defer log.Printf("Exiting tcp syn filtering goroutine")
+
+			requireSYN := true
+			requireACK := true
+			filteredCh := pkgtcping.FilterPackets(sender.GetPackets(), &pkgtcping.FilterRequirements{
+				SYN:     &requireSYN,
+				ACK:     &requireACK,
+				SrcPort: &dstPort,
+			})
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case pkgInfo, ok := <-filteredCh:
+					if !ok {
+						return
+					}
+					tracker.MarkReceived(pkgInfo)
+				}
+			}
+		}()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case event, ok := <-tracker.EventC:
+				if !ok {
+					return
+				}
+				if event.Type != pkgtcping.TrackerEVReceived && event.Type != pkgtcping.TrackerEVTimeout {
+					log.Printf("received unexpected event type: %v", event.Type)
+					continue
+				}
+
+				if event.Type == pkgtcping.TrackerEVReceived && event.Details != nil {
+					var err error
+					event.Details.ReceivedPkt, err = postProcessReceivedPkt(ctx, event.Details.ReceivedPkt, resolver, pinger.IPInfoAdapter)
+					if err != nil {
+						log.Printf("failed to post process received pkt: %v", err)
+					}
+
+					if receivedPkt := event.Details.ReceivedPkt; receivedPkt != nil && pinger.OnReceived != nil {
+						pinger.OnReceived(
+							ctx,
+							receivedPkt.SrcIP,
+							int(receivedPkt.TCP.SrcPort),
+							receivedPkt.DstIP,
+							int(receivedPkt.TCP.DstPort),
+							receivedPkt.Size,
+						)
+					}
+				}
+
+				evCh <- PingEvent{Data: event}
+
+				if totalPkts := pinger.PingRequest.TotalPkts; totalPkts != nil {
+					if *totalPkts == event.Details.Seq+1 {
+						close(allConfirmedCh)
+						return
+					}
+				}
 			case <-ticker.C:
 				initSeqNum := rand.Uint32()
 				synRequest := &pkgtcping.TCPSYNRequest{
@@ -211,9 +216,8 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 
 				if totalPkts := pinger.PingRequest.TotalPkts; totalPkts != nil {
 					if receipt.Seq+1 == *totalPkts {
-						// no more packets to send
-						<-allConfirmedCh
-						return
+						log.Printf("No more tcp syn packets to send")
+						ticker.Stop()
 					}
 				}
 			}
