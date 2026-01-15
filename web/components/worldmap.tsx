@@ -285,6 +285,7 @@ export type Marker = {
   tooltip?: ReactNode;
   open?: boolean;
   index?: string;
+  metadata?: Record<string, any>;
 };
 
 function setViewBox(svg: SVGSVGElement, viewBox: number[]): void {

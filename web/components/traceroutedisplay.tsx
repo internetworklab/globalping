@@ -27,10 +27,23 @@ import { TaskCloseIconButton } from "@/components/taskclose";
 import { StopButton } from "./playpause";
 import { getLatencyColor } from "./colorfunc";
 import { IPDisp } from "./ipdisp";
-import { generatePingSampleStream, PingSample } from "@/apis/globalping";
+import {
+  generatePingSampleStream,
+  getNodes,
+  PingSample,
+} from "@/apis/globalping";
 import { PendingTask } from "@/apis/types";
-import { LonLat, Marker, useCanvasSizing, WorldMap } from "./worldmap";
+import {
+  LonLat,
+  Marker,
+  Path,
+  toGeodesicPaths,
+  useCanvasSizing,
+  WorldMap,
+} from "./worldmap";
 import MapIcon from "@mui/icons-material/Map";
+import { useQuery } from "@tanstack/react-query";
+import { getNodeGroups } from "@/apis/utils";
 
 type TracerouteIPEntry = {
   ip: string;
@@ -325,9 +338,22 @@ function updateMarkers(
     stroke,
     tooltip,
     index,
+    metadata: { ttl },
   };
 
   newMarkers.push(newMarker);
+
+  newMarkers.sort((a, b) => {
+    const ttl1 = a.metadata?.ttl;
+    const ttl2 = b.metadata?.ttl;
+    if (ttl1 === undefined || ttl1 === null) {
+      return 1;
+    }
+    if (ttl2 === undefined || ttl2 === null) {
+      return -1;
+    }
+    return ttl1 - ttl2;
+  });
 
   return newMarkers;
 }
@@ -441,6 +467,55 @@ export function TracerouteResultDisplay(props: {
   const [showMap, setShowMap] = useState<boolean>(false);
   const { canvasSvgRef } = useCanvasSizing(canvasW, canvasH, showMap, false);
 
+  const { data: conns } = useQuery({
+    queryKey: ["nodes"],
+    queryFn: () => getNodes(),
+  });
+  const sourceSet = new Set<string>([tabValue]);
+  const nodeGroups = getNodeGroups(conns || {}, sourceSet);
+  const sourceMarkers: Marker[] = [];
+  if (nodeGroups && nodeGroups.length > 0) {
+    const node = nodeGroups[0];
+    if (node && node.latLon) {
+      sourceMarkers.push({
+        lonLat: [node.latLon[1], node.latLon[0]],
+        fill: "blue",
+        radius: 2000,
+        strokeWidth: 800,
+        stroke: "white",
+        index: `(SRC)`,
+      });
+    }
+  }
+
+  let markers: Marker[] = [];
+  let extraPaths: Path[] | undefined = undefined;
+  if (showMap) {
+    markers = pageState?.[tabValue]?.markers || [];
+    markers = [...sourceMarkers, ...markers];
+    if (markers.length > 1) {
+      extraPaths = [];
+      for (let j = 1; j < markers.length; j++) {
+        const fromMarker = markers[j - 1];
+        const toMarker = markers[j];
+        if (fromMarker && toMarker && fromMarker.lonLat && toMarker.lonLat) {
+          const paths = toGeodesicPaths(
+            [fromMarker.lonLat[1], fromMarker.lonLat[0]],
+            [toMarker.lonLat[1], toMarker.lonLat[0]],
+            200
+          );
+          for (const path of paths) {
+            extraPaths.push({
+              ...path,
+              stroke: "green",
+              strokeWidth: 1000,
+            });
+          }
+        }
+      }
+    }
+  }
+
   return (
     <Card>
       <Box
@@ -496,7 +571,8 @@ export function TracerouteResultDisplay(props: {
             canvasWidth={canvasW}
             canvasHeight={canvasH}
             fill="lightblue"
-            markers={showMap ? pageState?.[tabValue]?.markers ?? [] : []}
+            paths={extraPaths}
+            markers={markers}
           />
         )}
 
