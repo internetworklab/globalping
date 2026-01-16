@@ -317,8 +317,8 @@ function updateMarkers(
 
   const lonLat: LonLat = [lon, lat];
   const fill = getLatencyColor(rtt);
-  const radius = 2000;
-  const strokeWidth = 800;
+  const radius = 8;
+  const strokeWidth = 3;
   const stroke: CSSProperties["stroke"] = "white";
   const tooltip: ReactNode = (
     <Box>
@@ -470,7 +470,7 @@ export function TracerouteResultDisplay(props: {
 
   const { zoomEnabled } = useZoomControl();
 
-  const { canvasSvgRef } = useCanvasSizing(
+  const { canvasSvgRef, ratio = 1 } = useCanvasSizing(
     canvasW,
     canvasH,
     showMap,
@@ -490,8 +490,8 @@ export function TracerouteResultDisplay(props: {
       sourceMarkers.push({
         lonLat: [node.latLon[1], node.latLon[0]],
         fill: "blue",
-        radius: 2000,
-        strokeWidth: 800,
+        radius: 8,
+        strokeWidth: 3,
         stroke: "white",
         index: `(SRC)`,
       });
@@ -502,7 +502,11 @@ export function TracerouteResultDisplay(props: {
   let extraPaths: Path[] | undefined = undefined;
   if (showMap) {
     markers = pageState?.[tabValue]?.markers || [];
-    markers = [...sourceMarkers, ...markers];
+    markers = [...sourceMarkers, ...markers].map((m) => ({
+      ...m,
+      radius: m.radius ? m.radius * ratio : undefined,
+      strokeWidth: m.strokeWidth ? m.strokeWidth * ratio : undefined,
+    }));
     if (markers.length > 1) {
       extraPaths = [];
       for (let j = 1; j < markers.length; j++) {
@@ -518,7 +522,7 @@ export function TracerouteResultDisplay(props: {
             extraPaths.push({
               ...path,
               stroke: "green",
-              strokeWidth: 1000,
+              strokeWidth: 4 * ratio,
             });
           }
         }

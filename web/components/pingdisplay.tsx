@@ -73,7 +73,8 @@ type TableCellDataMap = Record<string, Record<string, TableCellData>>;
 
 function updateMarkers(
   pingSample: PingSample,
-  markers: Marker[] | undefined | null
+  markers: Marker[] | undefined | null,
+  ratio: number
 ): Marker[] {
   let newMarkers: Marker[] = [...(markers ?? [])];
 
@@ -100,8 +101,8 @@ function updateMarkers(
 
   const lonLat: LonLat = [lon, lat];
   const fill = getLatencyColor(rtt);
-  const radius = 2000;
-  const strokeWidth = 800;
+  const radius = 8 * ratio;
+  const strokeWidth = 3 * ratio;
   const stroke: CSSProperties["stroke"] = "white";
   const tooltip: ReactNode = (
     <Box>
@@ -492,7 +493,7 @@ function RowMap(props: {
 
   const { zoomEnabled } = useZoomControl();
 
-  const { canvasSvgRef } = useCanvasSizing(
+  const { canvasSvgRef, ratio = 1 } = useCanvasSizing(
     canvasX,
     canvasY,
     expanded,
@@ -555,8 +556,8 @@ function RowMap(props: {
     const marker: Marker = {
       lonLat: latLonToLonLat(nodeGroup.latLon),
       fill: color,
-      radius: 2000,
-      strokeWidth: 800,
+      radius: 8 * ratio,
+      strokeWidth: 3 * ratio,
       stroke: "white",
       index: nodeGroup.nodes?.[0]?.node_name
         ? trimPrefix(nodeGroup.nodes?.[0]?.node_name)
@@ -576,7 +577,7 @@ function RowMap(props: {
       source
     );
     for (const sample of historySamples) {
-      extraMarkers = updateMarkers(sample, extraMarkers);
+      extraMarkers = updateMarkers(sample, extraMarkers, ratio);
     }
   }
   if (extraMarkers.length > maximumExtraMarkers) {
