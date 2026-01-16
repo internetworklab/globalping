@@ -46,7 +46,7 @@ type HubCmd struct {
 	PktCountClamp *int `help:"The maximum number of packets to send for a single ping task"`
 }
 
-func (hubCmd HubCmd) Run() error {
+func (hubCmd HubCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 	var minPktInterval *time.Duration
 	var maxPktTimeout *time.Duration
 
@@ -120,6 +120,7 @@ func (hubCmd HubCmd) Run() error {
 	muxerPublic := http.NewServeMux()
 	muxerPublic.Handle("/conns", connsHandler)
 	muxerPublic.Handle("/ping", pingHandler)
+	muxerPublic.Handle("/version", pkghandler.NewVersionHandler(sharedCtx))
 
 	certPool, err := x509.SystemCertPool()
 	if err != nil {

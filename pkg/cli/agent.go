@@ -19,6 +19,7 @@ import (
 	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
+	pkghandler "example.com/rbmq-demo/pkg/handler"
 	pkgipinfo "example.com/rbmq-demo/pkg/ipinfo"
 	pkgmyprom "example.com/rbmq-demo/pkg/myprom"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
@@ -220,7 +221,7 @@ func getDN42IPInfoAdapter(agentCmd *AgentCmd) (pkgipinfo.GeneralIPInfoAdapter, e
 	return pkgipinfo.NewDN42IPInfoAdapter(agentCmd.DN42IPInfoProvider), nil
 }
 
-func (agentCmd *AgentCmd) Run() error {
+func (agentCmd *AgentCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 
 	ctx := context.TODO()
 	ctx, cancel := context.WithCancel(ctx)
@@ -324,6 +325,7 @@ func (agentCmd *AgentCmd) Run() error {
 	muxer := http.NewServeMux()
 	muxer.Handle("/simpleping", handler)
 	muxer.Handle("/tcping", handler)
+	muxer.Handle("/version", pkghandler.NewVersionHandler(sharedCtx))
 
 	var muxedHandler http.Handler = muxer
 	muxedHandler = pkgmyprom.WithCounterStoreHandler(muxedHandler, counterStore)
