@@ -19,3 +19,4 @@ RUN npm run build
 FROM nginx:latest AS app
 
 COPY --from=build /app/web/out /usr/share/nginx/html
+COPY --from=build /app/web/.version.txt /usr/share/nginx/html/version.txt
