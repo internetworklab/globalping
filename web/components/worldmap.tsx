@@ -292,7 +292,7 @@ function setViewBox(svg: SVGSVGElement, viewBox: number[]): void {
   svg?.setAttribute("viewBox", viewBox.join(" "));
 }
 
-function getViewBox(svg: SVGSVGElement): number[] {
+export function getViewBox(svg: SVGSVGElement): number[] {
   const viewBox = svg?.getAttribute("viewBox");
   if (viewBox) {
     return viewBox.split(" ").map(Number);
@@ -335,13 +335,14 @@ export function useCanvasSizing(
   enableZoom: boolean
 ) {
   const canvasSvgRef = useRef<SVGSVGElement>(null);
+  const [ratio, setRatio] = useState<number | undefined>(undefined);
   useEffect(() => {
     if (canvasSvgRef.current) {
       const svg = canvasSvgRef.current;
       const parent = svg.parentElement;
       if (parent) {
         const parentRect = parent.getBoundingClientRect();
-        console.log("[dbg] canvas parentRect", parentRect);
+
         const realRatio = Math.max(0.3, parentRect.height / parentRect.width);
         const croppedCanvasY = canvasW * realRatio;
         const offsetX = 0;
@@ -350,6 +351,9 @@ export function useCanvasSizing(
         const projYLen = croppedCanvasY;
 
         setViewBox(svg, [offsetX, offsetY, projXLen, projYLen]);
+        if (parentRect.width > 0) {
+          setRatio(projXLen / parentRect.width);
+        }
       }
     }
   }, [canvasW, canvasH, canvasSvgRef.current, expanded]);
@@ -375,27 +379,22 @@ export function useCanvasSizing(
           initProjXLen,
           initProjYLen,
         ]);
+        if (boundingBox.width > 0) {
+          setRatio(initProjXLen / boundingBox.width);
+        }
       };
       window.addEventListener("mousemove", onMouseMove);
-      console.log("[dbg] added mouse move listener");
+
       const onMouseUp = (event: MouseEvent) => {
         window.removeEventListener("mousemove", onMouseMove);
-        console.log("[dbg] removed mouse move listener");
         window.removeEventListener("mouseup", onMouseUp);
-        console.log("[dbg] removed mouse up listener");
       };
       window.addEventListener("mouseup", onMouseUp);
     };
     svg?.addEventListener("mousedown", onMouseDown);
-    console.log("[dbg] added mouse down listener");
-
-    console.log("[dbg] added wheel listener");
 
     return () => {
       svg?.removeEventListener("mousedown", onMouseDown);
-      console.log("[dbg] removed mouse down listener");
-
-      console.log("[dbg] removed wheel listener");
     };
   }, [canvasSvgRef.current, expanded]);
 
@@ -414,6 +413,10 @@ export function useCanvasSizing(
       const newOffsetY = offsetY + deltaY / 2;
       if (enableZoom) {
         setViewBox(svg!, [newOffsetX, newOffsetY, newProjXLen, newProjYLen]);
+        const boundingBox = svg!.getBoundingClientRect();
+        if (boundingBox.width > 0) {
+          setRatio(newProjXLen / boundingBox.width);
+        }
         event.preventDefault();
       }
     };
@@ -423,7 +426,7 @@ export function useCanvasSizing(
     };
   }, [enableZoom]);
 
-  return { canvasSvgRef };
+  return { canvasSvgRef, ratio };
 }
 
 function RenderMarker(props: { marker: Marker; projector: Projector }) {
@@ -511,7 +514,6 @@ export function WorldMap(props: {
   canvasHeight: number;
   fill: CSSProperties["fill"];
   markers: Marker[];
-  viewBox?: string;
   canvasSvgRef?: RefObject<SVGSVGElement>;
   paths?: Path[];
 }) {
@@ -520,7 +522,6 @@ export function WorldMap(props: {
     canvasHeight: canvasY,
     fill,
     markers,
-    viewBox,
     canvasSvgRef,
     paths,
   } = props;
@@ -540,7 +541,6 @@ export function WorldMap(props: {
       <Box sx={{ height: "100%" }}>
         <svg
           ref={canvasSvgRef}
-          viewBox={viewBox}
           width="100%"
           height="100%"
           style={{ overflow: "hidden", cursor: "grab" }}

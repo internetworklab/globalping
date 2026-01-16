@@ -2,6 +2,7 @@
 
 import {
   City,
+  getViewBox,
   LonLat,
   Marker,
   Path,
@@ -27,12 +28,13 @@ export default function DemoPage() {
   const canvasWidth = 40000;
   const canvasHeight = 25000;
 
-  const { canvasSvgRef } = useCanvasSizing(
+  const { canvasSvgRef, ratio = 1 } = useCanvasSizing(
     canvasWidth,
     canvasHeight,
     show,
     true
   );
+
   //   const fill: CSSProperties["fill"] = "hsl(202deg 32% 50%)";
   const fill: CSSProperties["fill"] = "#373737";
 
@@ -64,7 +66,7 @@ export default function DemoPage() {
     ...toGeodesicPaths(london.latLon, beijing.latLon, 200),
     ...toGeodesicPaths(london.latLon, singapore.latLon, 200),
     ...toGeodesicPaths(singapore.latLon, beijing.latLon, 200),
-  ].map((p) => ({ ...p, stroke: "green", strokeWidth: 60 }));
+  ].map((p) => ({ ...p, stroke: "green", strokeWidth: 4 * ratio }));
 
   return (
     <Box
@@ -88,31 +90,34 @@ export default function DemoPage() {
           {
             lonLat: [london.latLon[1], london.latLon[0]],
             fill: "green",
-            radius: 200,
-            strokeWidth: 80,
+            radius: 8 * ratio,
+            strokeWidth: 3 * ratio,
             stroke: "#fff",
+            index: "TTL=1, London, fdda:1234::5678",
           },
           {
             lonLat: [newYork.latLon[1], newYork.latLon[0]],
             fill: "green",
-            radius: 200,
-            strokeWidth: 80,
+            radius: 8 * ratio,
+            strokeWidth: 3 * ratio,
             stroke: "#fff",
+            index: "TTL=2, New York, 1.2.3.4",
           },
           {
             lonLat: [singapore.latLon[1], singapore.latLon[0]],
             fill: "green",
-            radius: 200,
-            strokeWidth: 80,
+            radius: 8 * ratio,
+            strokeWidth: 3 * ratio,
             stroke: "#fff",
+            index: "TTL=3, Singapore, fdda:1234::5678",
           },
-
           {
             lonLat: [beijing.latLon[1], beijing.latLon[0]],
             fill: "green",
-            radius: 200,
-            strokeWidth: 80,
+            radius: 8 * ratio,
+            strokeWidth: 3 * ratio,
             stroke: "#fff",
+            index: "TTL=4, Beijing, 192.168.1.1",
           },
         ]}
       />
