@@ -80,6 +80,8 @@ type AgentCmd struct {
 	IPInfoCacheValiditySecs int `help:"The validity of the IPInfo cache in seconds" default:"600"`
 
 	IP2LocationAPIEndpoint string `help:"APIEndpoint of IP2Location IPInfo provider" default:"https://api.ip2location.io/v2/"`
+
+	AgentTickInterval string `help:"The interval between node registration agent's tick" default:"15s"`
 }
 
 type PingHandler struct {
@@ -220,6 +222,9 @@ func getDN42IPInfoAdapter(agentCmd *AgentCmd) (pkgipinfo.GeneralIPInfoAdapter, e
 
 	return pkgipinfo.NewDN42IPInfoAdapter(agentCmd.DN42IPInfoProvider), nil
 }
+
+const defaultTickInterval = 15 * time.Second
+const minTickInterval = 1000 * time.Millisecond
 
 func (agentCmd *AgentCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 
@@ -459,12 +464,24 @@ func (agentCmd *AgentCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 			attributes[pkgnodereg.AttributeKeySupportTCP] = "true"
 		}
 
+		versionJ, _ := json.Marshal(sharedCtx.BuildVersion)
+		attributes[pkgnodereg.AttributeKeyVersion] = string(versionJ)
+
 		agent := pkgnodereg.NodeRegistrationAgent{
 			ServerAddress: agentCmd.ServerAddress,
 			NodeName:      agentCmd.NodeName,
 			ClientCert:    agentCmd.ClientCert,
 			ClientCertKey: agentCmd.ClientCertKey,
+			TickInterval:  defaultTickInterval,
 		}
+
+		if customTickIntv := agentCmd.AgentTickInterval; customTickIntv != "" {
+			intv, err := time.ParseDuration(customTickIntv)
+			if err == nil && int64(intv) >= int64(minTickInterval) {
+				agent.TickInterval = intv
+			}
+		}
+
 		agent.NodeAttributes = attributes
 		log.Println("Node attributes will be announced as:", attributes)
 

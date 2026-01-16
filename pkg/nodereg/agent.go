@@ -26,6 +26,7 @@ const (
 	AttributeKeySupportUDP         = "SupportUDP"
 	AttributeKeySupportPMTU        = "SupportPMTU"
 	AttributeKeySupportTCP         = "SupportTCP"
+	AttributeKeyVersion            = "Version"
 )
 
 type NodeRegistrationAgent struct {
@@ -35,7 +36,7 @@ type NodeRegistrationAgent struct {
 	NodeName       string
 	CorrelationID  *string
 	SeqID          *uint64
-	TickInterval   *time.Duration
+	TickInterval   time.Duration
 	intialized     bool
 	NodeAttributes pkgconnreg.ConnectionAttributes
 	LogEchoReplies bool
@@ -64,11 +65,7 @@ func (agent *NodeRegistrationAgent) Init() error {
 		log.Printf("Will start at sequence ID: %d", seqId)
 	}
 
-	if agent.TickInterval == nil {
-		agent.TickInterval = new(time.Duration)
-		*agent.TickInterval = 1 * time.Second
-		log.Printf("Using default tick interval: %s", *agent.TickInterval)
-	}
+	log.Printf("Agent will use tick interval: %s", agent.TickInterval.String())
 
 	agent.intialized = true
 	return nil
@@ -183,7 +180,7 @@ func (agent *NodeRegistrationAgent) doRun(ctx context.Context) error {
 			receiverExit <- agent.runReceiver(c)
 		}()
 
-		ticker := time.NewTicker(*agent.TickInterval)
+		ticker := time.NewTicker(agent.TickInterval)
 		defer ticker.Stop()
 
 		log.Printf("Using node name: %s", agent.NodeName)
