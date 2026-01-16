@@ -44,7 +44,11 @@ type HubCmd struct {
 	MaxPktTimeout  string `help:"The maximum timeout for a packet"`
 
 	PktCountClamp *int `help:"The maximum number of packets to send for a single ping task"`
+
+	WebSocketTimeout string `help:"The timeout for a WebSocket connection" default:"60s"`
 }
+
+const defaultWebSocketTimeout = 60 * time.Second
 
 func (hubCmd HubCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 	var minPktInterval *time.Duration
@@ -84,7 +88,11 @@ func (hubCmd HubCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 	sm := pkgsafemap.NewSafeMap()
 	cr := pkgconnreg.NewConnRegistry(sm)
 
-	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr)
+	wsTimeout := defaultWebSocketTimeout
+	if timeout, err := time.ParseDuration(hubCmd.WebSocketTimeout); err == nil && int64(timeout) >= 0 {
+		wsTimeout = timeout
+	}
+	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr, wsTimeout)
 	connsHandler := pkghandler.NewConnsHandler(cr)
 	var clientTLSConfig *tls.Config = &tls.Config{}
 	if customCAs != nil {

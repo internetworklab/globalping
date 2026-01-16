@@ -15,16 +15,16 @@ import (
 type WebsocketHandler struct {
 	upgrader *websocket.Upgrader
 	cr       *pkgconnreg.ConnRegistry
+	timeout  time.Duration
 }
 
-func NewWebsocketHandler(upgrader *websocket.Upgrader, cr *pkgconnreg.ConnRegistry) *WebsocketHandler {
+func NewWebsocketHandler(upgrader *websocket.Upgrader, cr *pkgconnreg.ConnRegistry, timeout time.Duration) *WebsocketHandler {
 	return &WebsocketHandler{
 		upgrader: upgrader,
 		cr:       cr,
+		timeout:  timeout,
 	}
 }
-
-const GCTimeout = 10 * time.Second
 
 func handleTextMessage(conn *websocket.Conn, cr *pkgconnreg.ConnRegistry, msg []byte) error {
 	var payload pkgframing.MessagePayload
@@ -86,7 +86,10 @@ func (h *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	var gcTimer *time.Timer = nil
-	gcTimer = time.NewTimer(GCTimeout)
+	if int64(h.timeout) == 0 {
+		panic("timeout is not set")
+	}
+	gcTimer = time.NewTimer(h.timeout)
 	defer func() {
 		if gcTimer != nil {
 			gcTimer.Stop()
@@ -110,7 +113,7 @@ func (h *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					log.Printf("Failed to handle text message from %s: %v", conn.RemoteAddr(), err)
 					continue
 				}
-				gcTimer.Reset(GCTimeout)
+				gcTimer.Reset(h.timeout)
 			default:
 				log.Printf("Received unknown message type from %s: %d", conn.RemoteAddr(), msgType)
 			}
