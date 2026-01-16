@@ -13,5 +13,4 @@ pnpm-lock.yaml
 
 .env
 .env.inside
-./.version.txt
-./cmd/globalping/.version.txt
+.version.txt
