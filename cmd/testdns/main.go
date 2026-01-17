@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"log"
-	"net/netip"
 	"os"
-	"time"
 
 	"encoding/json"
 
@@ -13,10 +11,7 @@ import (
 )
 
 func main() {
-	addrport, err := netip.ParseAddrPort("8.8.4.4:53")
-	if err != nil {
-		log.Fatalf("failed to parse addrport: %v", err)
-	}
+	addrport := "8.8.4.4:53"
 
 	targets := []string{
 		"www.google.com",
@@ -34,7 +29,7 @@ func main() {
 			parameter := pkgdnsprobe.LookupParameter{
 				AddrPort:  addrport,
 				Target:    target,
-				Timeout:   3000 * time.Millisecond,
+				TimeoutMs: 3000,
 				Transport: pkgdnsprobe.TransportUDP,
 				QueryType: queryType,
 			}

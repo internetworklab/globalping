@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"regexp"
 	"time"
 )
 
@@ -30,26 +31,26 @@ const (
 )
 
 type LookupParameter struct {
-	AddrPort  netip.AddrPort
-	Target    string
-	Timeout   time.Duration
-	Transport Transport
-	QueryType DNSQueryType
+	AddrPort  string       `json:"addrport"`
+	Target    string       `json:"target"`
+	TimeoutMs int64        `json:"timeoutMs"`
+	Transport Transport    `json:"transport"`
+	QueryType DNSQueryType `json:"queryType"`
 }
 
 type QueryResult struct {
-	Server           netip.AddrPort `json:"server"`
-	Target           string         `json:"target,omitempty"`
-	QueryType        DNSQueryType   `json:"query_type,omitempty"`
-	Answers          []interface{}  `json:"answers,omitempty"`
-	AnswerStrings    []string       `json:"answer_strings,omitempty"`
-	Error            error          `json:"error,omitempty"`
-	ErrString        string         `json:"err_string,omitempty"`
-	IOTimeout        bool           `json:"io_timeout,omitempty"`
-	NoSuchHost       bool           `json:"no_such_host,omitempty"`
-	Elapsed          time.Duration  `json:"elapsed,omitempty"`
-	StartedAt        time.Time      `json:"started_at"`
-	TimeoutSpecified time.Duration  `json:"timeout_specified"`
+	Server           string        `json:"server"`
+	Target           string        `json:"target,omitempty"`
+	QueryType        DNSQueryType  `json:"query_type,omitempty"`
+	Answers          []interface{} `json:"answers,omitempty"`
+	AnswerStrings    []string      `json:"answer_strings,omitempty"`
+	Error            error         `json:"error,omitempty"`
+	ErrString        string        `json:"err_string,omitempty"`
+	IOTimeout        bool          `json:"io_timeout,omitempty"`
+	NoSuchHost       bool          `json:"no_such_host,omitempty"`
+	Elapsed          time.Duration `json:"elapsed,omitempty"`
+	StartedAt        time.Time     `json:"started_at"`
+	TimeoutSpecified time.Duration `json:"timeout_specified"`
 }
 
 // make it suitable for transmitting over the wire
@@ -91,20 +92,33 @@ func analyzeError(err error, queryResult *QueryResult) bool {
 	}
 }
 
+func appendPort53(s string) string {
+	if !regexp.MustCompile(`:\d+$`).MatchString(s) {
+		return net.JoinHostPort(s, "53")
+	}
+	return s
+}
+
 // returns: answers, error
 func LookupDNS(ctx context.Context, parameter LookupParameter) (*QueryResult, error) {
 
 	transport := parameter.Transport
-	addrport := parameter.AddrPort
+
 	target := parameter.Target
-	timeout := parameter.Timeout
+	timeout := time.Duration(parameter.TimeoutMs) * time.Millisecond
 	queryType := parameter.QueryType
 	queryResult := new(QueryResult)
 	queryResult.Target = target
 	queryResult.QueryType = queryType
 	queryResult.Answers = make([]interface{}, 0)
-	queryResult.Server = addrport
+	queryResult.Server = parameter.AddrPort
 	queryResult.TimeoutSpecified = timeout
+
+	addrportObj, err := netip.ParseAddrPort(appendPort53(parameter.AddrPort))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse addrport %s as netip.AddrPort: %v", parameter.AddrPort, err)
+	}
+
 	queryResult.StartedAt = time.Now()
 	defer func() {
 		queryResult.Elapsed = time.Since(queryResult.StartedAt)
@@ -114,15 +128,15 @@ func LookupDNS(ctx context.Context, parameter LookupParameter) (*QueryResult, er
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			if transport == TransportUDP {
-				udpaddr := net.UDPAddrFromAddrPort(addrport)
+				udpaddr := net.UDPAddrFromAddrPort(addrportObj)
 				if udpaddr == nil {
-					return nil, fmt.Errorf("failed to get udpaddr from %s", addrport.String())
+					return nil, fmt.Errorf("failed to get udpaddr from %s", addrportObj.String())
 				}
 				return net.DialUDP("udp", nil, udpaddr)
 			} else if transport == TransportTCP {
-				tcpaddr := net.TCPAddrFromAddrPort(addrport)
+				tcpaddr := net.TCPAddrFromAddrPort(addrportObj)
 				if tcpaddr == nil {
-					return nil, fmt.Errorf("failed to get tcpaddr from %s", addrport.String())
+					return nil, fmt.Errorf("failed to get tcpaddr from %s", addrportObj.String())
 				}
 				return net.DialTCP("tcp", nil, tcpaddr)
 			} else {
