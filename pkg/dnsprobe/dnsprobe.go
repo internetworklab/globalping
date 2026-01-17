@@ -31,14 +31,16 @@ const (
 )
 
 type LookupParameter struct {
-	AddrPort  string       `json:"addrport"`
-	Target    string       `json:"target"`
-	TimeoutMs int64        `json:"timeoutMs"`
-	Transport Transport    `json:"transport"`
-	QueryType DNSQueryType `json:"queryType"`
+	CorrelationID string       `json:"corrId,omitempty"`
+	AddrPort      string       `json:"addrport"`
+	Target        string       `json:"target"`
+	TimeoutMs     int64        `json:"timeoutMs"`
+	Transport     Transport    `json:"transport"`
+	QueryType     DNSQueryType `json:"queryType"`
 }
 
 type QueryResult struct {
+	CorrelationID    string        `json:"corrId,omitempty"`
 	Server           string        `json:"server"`
 	Target           string        `json:"target,omitempty"`
 	QueryType        DNSQueryType  `json:"query_type,omitempty"`
@@ -99,13 +101,20 @@ func appendPort53(s string) string {
 	return s
 }
 
+const minTimeoutMs = 10
+
 // returns: answers, error
 func LookupDNS(ctx context.Context, parameter LookupParameter) (*QueryResult, error) {
 
 	transport := parameter.Transport
 
 	target := parameter.Target
+
+	if parameter.TimeoutMs <= minTimeoutMs {
+		return nil, fmt.Errorf("timeout is too short: at least %dms is required, got %dms", minTimeoutMs, parameter.TimeoutMs)
+	}
 	timeout := time.Duration(parameter.TimeoutMs) * time.Millisecond
+
 	queryType := parameter.QueryType
 	queryResult := new(QueryResult)
 	queryResult.Target = target
@@ -113,6 +122,7 @@ func LookupDNS(ctx context.Context, parameter LookupParameter) (*QueryResult, er
 	queryResult.Answers = make([]interface{}, 0)
 	queryResult.Server = parameter.AddrPort
 	queryResult.TimeoutSpecified = timeout
+	queryResult.CorrelationID = parameter.CorrelationID
 
 	addrportObj, err := netip.ParseAddrPort(appendPort53(parameter.AddrPort))
 	if err != nil {
