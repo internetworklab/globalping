@@ -13,6 +13,8 @@ import (
 	"syscall"
 
 	pkgdnsprobe "example.com/rbmq-demo/pkg/dnsprobe"
+	pkgpinger "example.com/rbmq-demo/pkg/pinger"
+	pkgutils "example.com/rbmq-demo/pkg/utils"
 	"github.com/google/uuid"
 )
 
@@ -32,26 +34,21 @@ func serve() chan net.Listener {
 	serveMux := http.NewServeMux()
 	serveMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if targets := r.URL.Query()["dnsTarget"]; targets != nil {
+			probeTgts := make([]pkgdnsprobe.LookupParameter, 0)
 			for _, target := range targets {
 				dnsProbeTarget := new(pkgdnsprobe.LookupParameter)
 				err := json.Unmarshal([]byte(target), dnsProbeTarget)
 				if err != nil {
-					http.Error(w, fmt.Sprintf("failed to parse target: %v", err), http.StatusBadRequest)
+					json.NewEncoder(w).Encode(pkgutils.ErrorResponse{Error: fmt.Errorf("failed to parse target: %v", err).Error()})
 					return
 				}
-
-				queryResult, err := pkgdnsprobe.LookupDNS(r.Context(), *dnsProbeTarget)
-				if err != nil {
-					http.Error(w, fmt.Sprintf("failed to lookup DNS: %v", err), http.StatusInternalServerError)
-					return
-				}
-
-				queryResult, err = queryResult.PreStringify()
-				if err != nil {
-					log.Fatalf("failed to pre-stringify query result: %v", err)
-				}
-
-				json.NewEncoder(w).Encode(queryResult)
+				probeTgts = append(probeTgts, *dnsProbeTarget)
+			}
+			pinger := &pkgpinger.DNSPinger{
+				Requests: probeTgts,
+			}
+			for ev := range pinger.Ping(r.Context()) {
+				json.NewEncoder(w).Encode(ev)
 				if flusher, ok := w.(http.Flusher); ok {
 					flusher.Flush()
 				}
@@ -129,13 +126,12 @@ func main() {
 			log.Fatalf("failed to read response body: %v", err)
 		}
 
-		queryResult := new(pkgdnsprobe.QueryResult)
-		if err := json.Unmarshal(scanner.Bytes(), queryResult); err != nil {
-			log.Fatalf("failed to unmarshal response: %v", err)
+		pingEvent := new(pkgpinger.PingEvent)
+		if err := json.Unmarshal(scanner.Bytes(), pingEvent); err != nil {
+			log.Fatalf("failed to unmarshal ping event: %v", err)
 		}
 
-		responses[queryResult.CorrelationID] = queryResult
-		j, _ := json.Marshal(queryResult)
+		j, _ := json.Marshal(pingEvent)
 		log.Printf("got response: %s", string(j))
 	}
 

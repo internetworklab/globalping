@@ -102,6 +102,7 @@ func appendPort53(s string) string {
 }
 
 const minTimeoutMs = 10
+const maxTimeoutMs = 10 * 1000
 
 // returns: answers, error
 func LookupDNS(ctx context.Context, parameter LookupParameter) (*QueryResult, error) {
@@ -112,6 +113,9 @@ func LookupDNS(ctx context.Context, parameter LookupParameter) (*QueryResult, er
 
 	if parameter.TimeoutMs <= minTimeoutMs {
 		return nil, fmt.Errorf("timeout is too short: at least %dms is required, got %dms", minTimeoutMs, parameter.TimeoutMs)
+	}
+	if parameter.TimeoutMs > maxTimeoutMs {
+		return nil, fmt.Errorf("timeout is too long: at most %dms is allowed, got %dms", maxTimeoutMs, parameter.TimeoutMs)
 	}
 	timeout := time.Duration(parameter.TimeoutMs) * time.Millisecond
 
