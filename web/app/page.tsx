@@ -24,7 +24,7 @@ import {
 import { CSSProperties, Fragment, useState } from "react";
 import { SourcesSelector } from "@/components/sourceselector";
 import { getCurrentPingers } from "@/apis/globalping";
-import { PendingTask } from "@/apis/types";
+import { DNSProbePlan, PendingTask } from "@/apis/types";
 import { TaskConfirmDialog } from "@/components/taskconfirm";
 import { PingResultDisplay } from "@/components/pingdisplay";
 import { TracerouteResultDisplay } from "@/components/traceroutedisplay";
@@ -41,13 +41,6 @@ const fakeSources = [
   "192.168.1.6",
   "192.168.1.7",
 ];
-
-type DNSProbePlan = {
-  transport: "udp" | "tcp";
-  type: "a" | "aaaa" | "cname" | "mx" | "ns" | "ptr" | "txt";
-  domains: string[];
-  resolvers: string[];
-};
 
 function getNextId(onGoingTasks: PendingTask[]): number {
   let maxId = 0;
@@ -195,11 +188,28 @@ export default function Home() {
                       .map((t) => t.trim())
                       .filter((t) => t.length > 0);
 
+                    const domains = dedup(
+                      dnsProbePlan.domainsInput?.split(",") || []
+                    )
+                      .map((d) => d.trim())
+                      .filter((d) => d.length > 0);
+
+                    const resolvers = dedup(
+                      dnsProbePlan.resolversInput?.split(",") || []
+                    )
+                      .map((r) => r.trim())
+                      .filter((r) => r.length > 0);
+
                     setPendingTask((prev) => ({
                       ...prev,
                       sources: srcs,
                       targets: tgts,
                       taskId: getNextId(onGoingTasks),
+                      dnsProbePlan: {
+                        ...dnsProbePlan,
+                        domains: domains,
+                        resolvers: resolvers,
+                      },
                     }));
                     setOpenTaskConfirmDialog(true);
                   }}
@@ -424,6 +434,13 @@ export default function Home() {
                     placeholder="Querying Domains, separated by comma"
                     fullWidth
                     label="Domains"
+                    value={dnsProbePlan.domainsInput || ""}
+                    onChange={(e) =>
+                      setDnsProbePlan((prev) => ({
+                        ...prev,
+                        domainsInput: e.target.value,
+                      }))
+                    }
                   />
                   <TextField
                     sx={{ marginTop: 2 }}
@@ -431,6 +448,13 @@ export default function Home() {
                     placeholder="Servers where to send queries, separated by comma, e.g. 8.8.8.8, or [2001:4860:4860::8888]:53"
                     fullWidth
                     label="Resolvers"
+                    value={dnsProbePlan.resolversInput || ""}
+                    onChange={(e) =>
+                      setDnsProbePlan((prev) => ({
+                        ...prev,
+                        resolversInput: e.target.value,
+                      }))
+                    }
                   />
                 </Box>
               ) : (
