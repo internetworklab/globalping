@@ -15,6 +15,11 @@ import {
   Checkbox,
   FormGroup,
   Link,
+  Select,
+  MenuItem,
+  InputLabel,
+  FormControl,
+  FormLabel,
 } from "@mui/material";
 import { CSSProperties, Fragment, useState } from "react";
 import { SourcesSelector } from "@/components/sourceselector";
@@ -36,6 +41,13 @@ const fakeSources = [
   "192.168.1.6",
   "192.168.1.7",
 ];
+
+type DNSProbePlan = {
+  transport: "udp" | "tcp";
+  type: "a" | "aaaa" | "cname" | "mx" | "ns" | "ptr" | "txt";
+  domains: string[];
+  resolvers: string[];
+};
 
 function getNextId(onGoingTasks: PendingTask[]): number {
   let maxId = 0;
@@ -68,7 +80,7 @@ export default function Home() {
       sources: [],
       targets: [],
       taskId: 0,
-      type: "ping",
+      type: "dns",
     };
   });
   const [openTaskConfirmDialog, setOpenTaskConfirmDialog] =
@@ -76,6 +88,14 @@ export default function Home() {
 
   const [sourcesInput, setSourcesInput] = useState<string>("");
   const [targetsInput, setTargetsInput] = useState<string>("");
+
+  const [dnsProbePlan, setDnsProbePlan] = useState<DNSProbePlan>({
+    transport: "udp",
+    type: "a",
+    domains: [],
+    resolvers: [],
+  });
+  console.log("[dbg] dns probe plan", dnsProbePlan);
 
   const [onGoingTasks, setOnGoingTasks] = useState<PendingTask[]>([
     // {
@@ -206,104 +226,47 @@ export default function Home() {
                   alignItems: "center",
                 }}
               >
-                <RadioGroup
-                  value={pendingTask.type}
-                  onChange={(e) =>
-                    setPendingTask((prev) => ({
-                      ...prev,
-                      type: e.target.value as "ping" | "traceroute",
-                      pmtu:
-                        e.target.value === "ping" ||
-                        e.target.value === "tcpping"
-                          ? false
-                          : prev.pmtu,
-                      useUDP:
-                        e.target.value === "tcpping" ? false : prev.useUDP,
-                    }))
-                  }
-                  row
-                >
-                  <FormControlLabel
-                    value="ping"
-                    control={<Radio />}
-                    label="Ping"
-                  />
-                  <FormControlLabel
-                    value="traceroute"
-                    control={<Radio />}
-                    label="Traceroute"
-                  />
-                  <FormControlLabel
-                    value="tcpping"
-                    control={<Radio />}
-                    label="TCP Ping"
-                  />
-                </RadioGroup>
-                <FormGroup row>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={!!pendingTask.preferV4}
-                        onChange={(_, ckd) => {
-                          setPendingTask((prev) => ({
-                            ...prev,
-                            preferV4: !!ckd,
-                            preferV6: ckd ? false : prev.preferV6,
-                          }));
-                        }}
-                      />
+                <FormControl>
+                  <FormLabel>Task Type</FormLabel>
+                  <RadioGroup
+                    value={pendingTask.type}
+                    onChange={(e) =>
+                      setPendingTask((prev) => ({
+                        ...prev,
+                        type: e.target.value as "ping" | "traceroute",
+                        pmtu:
+                          e.target.value === "ping" ||
+                          e.target.value === "tcpping"
+                            ? false
+                            : prev.pmtu,
+                        useUDP:
+                          e.target.value === "tcpping" ? false : prev.useUDP,
+                      }))
                     }
-                    label="Prefer V4"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={!!pendingTask.preferV6}
-                        onChange={(_, ckd) => {
-                          setPendingTask((prev) => ({
-                            ...prev,
-                            preferV4: ckd ? false : prev.preferV4,
-                            preferV6: !!ckd,
-                          }));
-                        }}
-                      />
-                    }
-                    label="Prefer V6"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        disabled={pendingTask.type === "tcpping"}
-                        checked={!!pendingTask.useUDP}
-                        onChange={(_, ckd) => {
-                          setPendingTask((prev) => ({
-                            ...prev,
-                            useUDP: !!ckd,
-                          }));
-                        }}
-                      />
-                    }
-                    label="Use UDP"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        disabled={pendingTask.type !== "traceroute"}
-                        checked={
-                          pendingTask.type === "traceroute" &&
-                          !!pendingTask.pmtu
-                        }
-                        onChange={(_, ckd) => {
-                          setPendingTask((prev) => ({
-                            ...prev,
-                            pmtu: !!ckd,
-                          }));
-                        }}
-                      />
-                    }
-                    label="PMTU"
-                  />
-                </FormGroup>
+                    row
+                  >
+                    <FormControlLabel
+                      value="ping"
+                      control={<Radio />}
+                      label="Ping"
+                    />
+                    <FormControlLabel
+                      value="traceroute"
+                      control={<Radio />}
+                      label="Traceroute"
+                    />
+                    <FormControlLabel
+                      value="tcpping"
+                      control={<Radio />}
+                      label="TCP Ping"
+                    />
+                    <FormControlLabel
+                      value="dns"
+                      control={<Radio />}
+                      label="DNS"
+                    />
+                  </RadioGroup>
+                </FormControl>
               </Box>
               <Tooltip title="more">
                 <IconButton
@@ -313,6 +276,103 @@ export default function Home() {
                   <MoreHorizIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
+            </Box>
+            <Box sx={{ marginTop: 2 }}>
+              {pendingTask.type === "dns" ? (
+                <FormControl>
+                  <FormLabel>Options</FormLabel>
+                  <RadioGroup
+                    row
+                    value={dnsProbePlan.transport}
+                    onChange={(e) =>
+                      setDnsProbePlan((prev) => ({
+                        ...prev,
+                        transport: e.target.value as "udp" | "tcp",
+                      }))
+                    }
+                  >
+                    <FormControlLabel
+                      control={<Radio />}
+                      value="udp"
+                      label="Use UDP"
+                    />
+                    <FormControlLabel
+                      control={<Radio />}
+                      value="tcp"
+                      label="Use TCP"
+                    />
+                  </RadioGroup>
+                </FormControl>
+              ) : (
+                <FormControl>
+                  <FormLabel>Options</FormLabel>
+                  <FormGroup row>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={!!pendingTask.preferV4}
+                          onChange={(_, ckd) => {
+                            setPendingTask((prev) => ({
+                              ...prev,
+                              preferV4: !!ckd,
+                              preferV6: ckd ? false : prev.preferV6,
+                            }));
+                          }}
+                        />
+                      }
+                      label="Prefer V4"
+                    />
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={!!pendingTask.preferV6}
+                          onChange={(_, ckd) => {
+                            setPendingTask((prev) => ({
+                              ...prev,
+                              preferV4: ckd ? false : prev.preferV4,
+                              preferV6: !!ckd,
+                            }));
+                          }}
+                        />
+                      }
+                      label="Prefer V6"
+                    />
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          disabled={pendingTask.type === "tcpping"}
+                          checked={!!pendingTask.useUDP}
+                          onChange={(_, ckd) => {
+                            setPendingTask((prev) => ({
+                              ...prev,
+                              useUDP: !!ckd,
+                            }));
+                          }}
+                        />
+                      }
+                      label="Use UDP"
+                    />
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          disabled={pendingTask.type !== "traceroute"}
+                          checked={
+                            pendingTask.type === "traceroute" &&
+                            !!pendingTask.pmtu
+                          }
+                          onChange={(_, ckd) => {
+                            setPendingTask((prev) => ({
+                              ...prev,
+                              pmtu: !!ckd,
+                            }));
+                          }}
+                        />
+                      }
+                      label="PMTU"
+                    />
+                  </FormGroup>
+                </FormControl>
+              )}
             </Box>
             <Box sx={{ marginTop: 2 }}>
               <SourcesSelector
@@ -332,6 +392,9 @@ export default function Home() {
                   if (pendingTask.type === "tcpping") {
                     filter = { ...(filter || {}), SupportTCP: "true" };
                   }
+                  if (pendingTask.type === "dns") {
+                    filter = { ...(filter || {}), CapabilityDNSProbe: "true" };
+                  }
 
                   return getCurrentPingers(filter);
                   // return new Promise((res) => {
@@ -341,20 +404,51 @@ export default function Home() {
               />
             </Box>
             <Box sx={{ marginTop: 2 }}>
-              <TextField
-                variant="standard"
-                placeholder={
-                  pendingTask.type === "ping"
-                    ? "Targets, separated by comma"
-                    : pendingTask.type === "tcpping"
-                    ? 'Specify a single target, in the format of <host>:<port>", e.g. 192.168.1.1:80, or cloudflare.com:443'
-                    : "Specify a single target"
-                }
-                fullWidth
-                label={pendingTask.type === "ping" ? "Targets" : "Target"}
-                value={targetsInput}
-                onChange={(e) => setTargetsInput(e.target.value)}
-              />
+              {pendingTask.type === "dns" ? (
+                <Box>
+                  <FormControl fullWidth variant="standard">
+                    <InputLabel>Type</InputLabel>
+                    <Select label="Type">
+                      <MenuItem value={"a"}>A</MenuItem>
+                      <MenuItem value={"aaaa"}>AAAA</MenuItem>
+                      <MenuItem value={"cname"}>CNAME</MenuItem>
+                      <MenuItem value={"mx"}>MX</MenuItem>
+                      <MenuItem value={"ns"}>NS</MenuItem>
+                      <MenuItem value={"ptr"}>PTR</MenuItem>
+                      <MenuItem value={"txt"}>TXT</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <TextField
+                    sx={{ marginTop: 2 }}
+                    variant="standard"
+                    placeholder="Querying Domains, separated by comma"
+                    fullWidth
+                    label="Domains"
+                  />
+                  <TextField
+                    sx={{ marginTop: 2 }}
+                    variant="standard"
+                    placeholder="Servers where to send queries, separated by comma, e.g. 8.8.8.8, or [2001:4860:4860::8888]:53"
+                    fullWidth
+                    label="Resolvers"
+                  />
+                </Box>
+              ) : (
+                <TextField
+                  variant="standard"
+                  placeholder={
+                    pendingTask.type === "ping"
+                      ? "Targets, separated by comma"
+                      : pendingTask.type === "tcpping"
+                      ? 'Specify a single target, in the format of <host>:<port>", e.g. 192.168.1.1:80, or cloudflare.com:443'
+                      : "Specify a single target"
+                  }
+                  fullWidth
+                  label={pendingTask.type === "ping" ? "Targets" : "Target"}
+                  value={targetsInput}
+                  onChange={(e) => setTargetsInput(e.target.value)}
+                />
+              )}
             </Box>
           </CardContent>
         </Card>

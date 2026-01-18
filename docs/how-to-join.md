@@ -140,7 +140,8 @@ bin/globalping agent \
   --support-pmtu=true \
   --support-tcp=true \
   --ip-2-location-api-endpoint=https://api.ip2location.io \
-  --dn-42-ip-2-location-api-endpoint=https://regquery.ping2.sh/ip2location/v1/query
+  --dn-42-ip-2-location-api-endpoint=https://regquery.ping2.sh/ip2location/v1/query \
+  --support-dns=true
 ```
 
 By default, the agent use default public endpoint ":2112" to expose prometheus metrics, if you don't like it to be public, just change it to

@@ -1,4 +1,4 @@
-export type PingTaskType = "ping" | "traceroute" | "tcpping";
+export type PingTaskType = "ping" | "traceroute" | "tcpping" | "dns";
 
 export type PendingTask = {
   sources: string[];
