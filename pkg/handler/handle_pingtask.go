@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -63,12 +62,8 @@ func getConnWithCapability(ctx context.Context, connRegistry *pkgconnreg.ConnReg
 }
 
 func tryStripPort(addrport string) string {
-	pattern := regexp.MustCompile(`:\d+$`)
-	if pattern.MatchString(addrport) {
-		host, _, err := net.SplitHostPort(addrport)
-		if err != nil {
-			return addrport
-		}
+	host, _, err := net.SplitHostPort(addrport)
+	if err == nil {
 		return host
 	}
 	return addrport

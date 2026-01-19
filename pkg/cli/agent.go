@@ -91,26 +91,20 @@ type PingHandler struct {
 	DomainRespondRange []regexp.Regexp
 }
 
-func getHost(addrport string) (net.IP, error) {
-	pattern := regexp.MustCompile(`:\d+$`)
-	if pattern.MatchString(addrport) {
-		host, _, err := net.SplitHostPort(addrport)
-		if err != nil {
-			return nil, fmt.Errorf("failed to split host and port: %v", err)
-		}
-		ip := net.ParseIP(host)
-		if ip == nil {
-			return nil, fmt.Errorf("failed to parse IP from host: %s", host)
-		}
-		return ip, nil
-	}
-
-	ip := net.ParseIP(addrport)
+func getHostFromIP(ipstr string) (net.IP, error) {
+	ip := net.ParseIP(ipstr)
 	if ip == nil {
-		return nil, fmt.Errorf("failed to parse IP from addrport: %s", addrport)
+		return nil, fmt.Errorf("failed to parse IP from string: %s", ipstr)
 	}
-
 	return ip, nil
+}
+
+func getHost(addrport string) (net.IP, error) {
+	host, _, err := net.SplitHostPort(addrport)
+	if err != nil {
+		return getHostFromIP(addrport)
+	}
+	return getHostFromIP(host)
 }
 
 func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -551,7 +551,6 @@ export default function Home() {
         onConfirm={() => {
           setOnGoingTasks([...onGoingTasks, pendingTask]);
           setOpenTaskConfirmDialog(false);
-          setTargetsInput("");
         }}
       />
       <About open={showAboutDialog} onClose={() => setShowAboutDialog(false)} />

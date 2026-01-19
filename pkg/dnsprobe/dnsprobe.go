@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"regexp"
 	"time"
 )
 
@@ -98,7 +97,8 @@ func analyzeError(err error, queryResult *QueryResult) bool {
 }
 
 func appendPort53(s string) string {
-	if !regexp.MustCompile(`:\d+$`).MatchString(s) {
+	_, _, err := net.SplitHostPort(s)
+	if err != nil {
 		return net.JoinHostPort(s, "53")
 	}
 	return s
