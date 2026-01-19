@@ -24,7 +24,12 @@ import {
 import { CSSProperties, Fragment, useState } from "react";
 import { SourcesSelector } from "@/components/sourceselector";
 import { getCurrentPingers } from "@/apis/globalping";
-import { DNSProbePlan, expandDNSProbePlan, PendingTask } from "@/apis/types";
+import {
+  DNSProbePlan,
+  DNSQueryType,
+  expandDNSProbePlan,
+  PendingTask,
+} from "@/apis/types";
 import { TaskConfirmDialog } from "@/components/taskconfirm";
 import { PingResultDisplay } from "@/components/pingdisplay";
 import { TracerouteResultDisplay } from "@/components/traceroutedisplay";
@@ -94,7 +99,6 @@ export default function Home() {
     domains: [],
     resolvers: [],
   });
-  console.log("[dbg] dns probe plan", dnsProbePlan);
 
   const [onGoingTasks, setOnGoingTasks] = useState<PendingTask[]>([
     {
@@ -426,7 +430,16 @@ export default function Home() {
                 <Box>
                   <FormControl fullWidth variant="standard">
                     <InputLabel>Type</InputLabel>
-                    <Select label="Type">
+                    <Select
+                      label="Type"
+                      value={dnsProbePlan.type}
+                      onChange={(e) =>
+                        setDnsProbePlan((prev) => ({
+                          ...prev,
+                          type: e.target.value as DNSQueryType,
+                        }))
+                      }
+                    >
                       <MenuItem value={"a"}>A</MenuItem>
                       <MenuItem value={"aaaa"}>AAAA</MenuItem>
                       <MenuItem value={"cname"}>CNAME</MenuItem>
@@ -496,7 +509,14 @@ export default function Home() {
                 }}
               />
             ) : task.type === "dns" ? (
-              <DNSProbeDisplay task={task} />
+              <DNSProbeDisplay
+                task={task}
+                onDeleted={() => {
+                  setOnGoingTasks(
+                    onGoingTasks.filter((t) => t.taskId !== task.taskId)
+                  );
+                }}
+              />
             ) : (
               <PingResultDisplay
                 pendingTask={task}

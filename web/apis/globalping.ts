@@ -281,8 +281,8 @@ type RawTCPPingEvent = {
 };
 
 // Raw event returned by the API
-type RawPingEvent = {
-  data?: RawPingEventData;
+export type RawPingEvent<T = RawPingEventData> = {
+  data?: T;
   metadata?: RawPingEventMetadata;
 };
 

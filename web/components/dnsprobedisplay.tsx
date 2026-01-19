@@ -18,10 +18,12 @@ import {
   AnswersMap,
   DNSProbePlan,
   DNSResponse,
+  DNSTarget,
   expandDNSProbePlan,
   PendingTask,
 } from "@/apis/types";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { RawPingEvent } from "@/apis/globalping";
 
 function RenderError(props: { dnsResponse: DNSResponse }) {
   const { dnsResponse } = props;
@@ -40,14 +42,148 @@ function RenderError(props: { dnsResponse: DNSResponse }) {
   return <Fragment></Fragment>;
 }
 
-export function DNSProbeDisplay(props: { task: PendingTask }) {
-  const { task } = props;
+function updateAnswersMap(
+  answersMap: AnswersMap,
+  event: RawPingEvent<DNSResponse>
+): AnswersMap {
+  const dnsResponse = event.data as any as DNSResponse;
+  if (!dnsResponse?.corrId) {
+    return answersMap;
+  }
+
+  const from = event.metadata?.from || "";
+  if (!from) {
+    return answersMap;
+  }
+
+  const newAnswersMap = { ...answersMap };
+  if (!newAnswersMap[from]) {
+    answersMap[from] = {};
+  }
+  answersMap[from] = {
+    ...answersMap[from],
+    [dnsResponse.corrId]: [dnsResponse],
+  };
+
+  return newAnswersMap;
+}
+
+// function makeRealDNSResponseStream(): Promise<
+//   ReadableStream<RawPingEvent<DNSResponse>>
+// > {
+//     // todo
+// }
+
+function makeFakeDNSResponseStream(
+  targets: DNSTarget[],
+  sources: string[]
+): Promise<ReadableStream<RawPingEvent<DNSResponse>>> {
+  let intervalId: ReturnType<typeof setInterval> | null = null;
+  const timerWrapper: {
+    intervalId: ReturnType<typeof setInterval> | null;
+  } = {
+    intervalId: null,
+  };
+
+  const stream = new ReadableStream<RawPingEvent<DNSResponse>>({
+    start(controller) {
+      console.log("[dbg] start interval");
+      timerWrapper.intervalId = setInterval(() => {
+        const target = targets[Math.floor(Math.random() * targets.length)];
+        const source = sources[Math.floor(Math.random() * sources.length)];
+        let ans = Math.random().toString(36).substring(2, 8);
+        ans = ans + "." + "from-" + source + "." + target.addrport;
+        const response: DNSResponse = {
+          corrId: target.corrId,
+          server: target.addrport,
+          target: target.target,
+          query_type: target.queryType,
+          answer_strings: [ans],
+        };
+        const event: RawPingEvent<DNSResponse> = {
+          data: response,
+          metadata: {
+            from: source,
+            target: response.corrId,
+          },
+        };
+        console.log("[dbg] enqueue event", event);
+        controller.enqueue(event);
+      }, 500);
+    },
+    cancel(readon?: any): Promise<void> {
+      if (timerWrapper.intervalId) {
+        console.log("[dbg] cancel interval");
+        clearInterval(timerWrapper.intervalId);
+        timerWrapper.intervalId = null;
+      }
+      return Promise.resolve();
+    },
+  });
+
+  return Promise.resolve(stream);
+}
+
+export function DNSProbeDisplay(props: {
+  task: PendingTask;
+  onDeleted: () => void;
+}) {
+  const { task, onDeleted } = props;
   const { sources } = task;
 
   const targets = task.dnsProbeTargets || [];
 
   const [loading, setLoading] = useState(false);
   const [answers, setAnswers] = useState<AnswersMap>();
+
+  useEffect(() => {
+    const streamRef: {
+      stream: ReadableStream<RawPingEvent<DNSResponse>> | null;
+      reader: ReadableStreamDefaultReader<RawPingEvent<DNSResponse>> | null;
+    } = { stream: null, reader: null };
+    const timer = window.setTimeout(() => {
+      const sources = task.sources || [];
+      const targets = task.dnsProbeTargets || [];
+      console.log("[dbg] create fake DNS response stream", targets, sources);
+
+      const streamPromise = makeFakeDNSResponseStream(targets, sources);
+
+      console.log("[dbg] pipe to writable stream");
+      streamPromise
+        .then((stream) => {
+          streamRef.stream = stream;
+          const reader = stream.getReader();
+          streamRef.reader = reader;
+          function doRead({
+            done,
+            value,
+          }: {
+            done: boolean;
+            value: RawPingEvent<DNSResponse> | undefined;
+          }) {
+            if (done) {
+              return;
+            }
+            if (value) {
+              setAnswers((answers) => updateAnswersMap(answers ?? {}, value));
+            }
+            reader.read().then(doRead);
+          }
+          reader.read().then(doRead);
+        })
+        .catch((e) => console.error("failed to then stream"));
+    });
+
+    return () => {
+      window.clearTimeout(timer);
+      if (streamRef.reader) {
+        console.log("[dbg] cancel stream");
+        streamRef.reader?.cancel().then(() => {
+          streamRef.reader = null;
+        });
+      }
+    };
+  }, [task.taskId]);
 
   return (
     <Card>
@@ -66,7 +202,7 @@ export function DNSProbeDisplay(props: { task: PendingTask }) {
           <TaskCloseIconButton
             taskId={0}
             onConfirmedClosed={() => {
-              console.log("onConfirmedClosed");
+              onDeleted();
             }}
           />
         </Box>
