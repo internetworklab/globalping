@@ -16,6 +16,7 @@ import (
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
 	pkgpinger "example.com/rbmq-demo/pkg/pinger"
 	pkgutils "example.com/rbmq-demo/pkg/utils"
+	quicHttp3 "github.com/quic-go/quic-go/http3"
 )
 
 type OutOfRespondRangePolicy string
@@ -69,7 +70,7 @@ func tryStripPort(addrport string) string {
 	return addrport
 }
 
-func checkRemotePingerPolicy(ctx context.Context, regData *pkgconnreg.ConnRegistryData, target string, resolver *net.Resolver, outOfRangePolicy OutOfRespondRangePolicy) *string {
+func checkRemotePingerPolicy(ctx context.Context, regData *pkgconnreg.ConnRegistryData, target string, resolver *net.Resolver, outOfRangePolicy OutOfRespondRangePolicy) (*string, *http.Client) {
 	// When OutOfRange policy is 'deny', the hub will carefully consider the RespondRange attribute announced by the agent,
 	// and make sure the ping request won't be distributed to whom that are not desired.
 	if outOfRangePolicy == ORPolicyDeny && regData.Attributes[pkgnodereg.AttributeKeyRespondRange] != "" {
@@ -95,8 +96,17 @@ func checkRemotePingerPolicy(ctx context.Context, regData *pkgconnreg.ConnRegist
 		if len(rangeCIDRs) > 0 && !pkgutils.CheckIntersect(dsts, rangeCIDRs) {
 			log.Printf("Target %s is not in the respond range of node %+v which is %s", target, regData.NodeName, strings.Join(respondRange, ", "))
 			log.Printf("Out of range target %s will not be assigned to a remote pinger because of the policy", target)
-			return nil
+			return nil, nil
 		}
+	}
+
+	if regData.QUICConn != nil {
+		tr := &quicHttp3.Transport{}
+		httpClient := &http.Client{
+			Transport: tr.NewRawClientConn(regData.QUICConn),
+		}
+		log.Printf("Using QUIC connection to remote pinger %s", target)
+		return nil, httpClient
 	}
 
 	remotePingerEndpoint, ok := regData.Attributes[pkgnodereg.AttributeKeyHttpEndpoint]
@@ -104,16 +114,16 @@ func checkRemotePingerPolicy(ctx context.Context, regData *pkgconnreg.ConnRegist
 		urlObj, err := url.Parse(remotePingerEndpoint)
 		if err != nil {
 			log.Printf("Failed to parse remote pinger endpoint: %v", err)
-			return nil
+			return nil, nil
 		}
 		if urlObj.Path == "" {
 			urlObj.Path = defaultRemotePingerPath
 		}
 		remotePingerEndpoint = urlObj.String()
-		return &remotePingerEndpoint
+		return &remotePingerEndpoint, nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 func RespondError(w http.ResponseWriter, err error, status int) {
@@ -232,18 +242,25 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		remotePingable := getConnWithCapability(ctx, handler.ConnRegistry, from, pkgnodereg.AttributeKeyPingCapability)
 		if remotePingable != nil {
 			for _, target := range form.Targets {
-				remotePingerEndpoint := checkRemotePingerPolicy(ctx, remotePingable, target, handler.Resolver, handler.OutOfRespondRangePolicy)
-				if remotePingerEndpoint == nil {
+				remotePingerEndpoint, quicClient := checkRemotePingerPolicy(ctx, remotePingable, target, handler.Resolver, handler.OutOfRespondRangePolicy)
+				if remotePingerEndpoint == nil && quicClient == nil {
 					continue
 				}
 
-				var remotePinger pkgpinger.Pinger = &pkgpinger.SimpleRemotePinger{
-					Endpoint:           *remotePingerEndpoint,
+				sp := &pkgpinger.SimpleRemotePinger{
 					Request:            *form.DeriveAsPingRequest(from, target),
 					ClientTLSConfig:    handler.ClientTLSConfig,
 					ExtraRequestHeader: extraRequestHeader,
+					QUICClient:         quicClient,
+					NodeName:           from,
 				}
-				log.Printf("Sending ping to remote pinger %s via http endpoint %s", from, *remotePingerEndpoint)
+
+				if remotePingerEndpoint != nil {
+					log.Printf("Sending ping to remote pinger %s via http endpoint %s", from, *remotePingerEndpoint)
+					sp.Endpoint = *remotePingerEndpoint
+				}
+
+				var remotePinger pkgpinger.Pinger = sp
 				if _, ok := pingers[from]; !ok {
 					pingers[from] = make(map[string]pkgpinger.Pinger, 0)
 				}
@@ -264,18 +281,24 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 					continue
 				}
 
-				remotePingerEndpoint := checkRemotePingerPolicy(ctx, remotePingable, tryStripPort(dnsTarget.AddrPort), handler.Resolver, handler.OutOfRespondRangePolicy)
-				if remotePingerEndpoint == nil {
+				remotePingerEndpoint, quicClient := checkRemotePingerPolicy(ctx, remotePingable, tryStripPort(dnsTarget.AddrPort), handler.Resolver, handler.OutOfRespondRangePolicy)
+				if remotePingerEndpoint == nil && quicClient == nil {
 					continue
 				}
 
-				var remotePinger pkgpinger.Pinger = &pkgpinger.SimpleRemotePinger{
-					Endpoint:           *remotePingerEndpoint,
+				sp := &pkgpinger.SimpleRemotePinger{
 					Request:            *form.DeriveAsDNSProbeRequest(from, dnsTarget),
 					ClientTLSConfig:    handler.ClientTLSConfig,
 					ExtraRequestHeader: extraRequestHeader,
+					QUICClient:         quicClient,
+					NodeName:           from,
 				}
-				log.Printf("Sending ping to remote pinger %s via http endpoint %s", from, *remotePingerEndpoint)
+				var remotePinger pkgpinger.Pinger = sp
+				if remotePingerEndpoint != nil {
+					log.Printf("Sending ping to remote pinger %s via http endpoint %s", from, *remotePingerEndpoint)
+					sp.Endpoint = *remotePingerEndpoint
+				}
+
 				if _, ok := pingers[from]; !ok {
 					pingers[from] = make(map[string]pkgpinger.Pinger, 0)
 				}

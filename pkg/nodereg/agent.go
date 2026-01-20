@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	quicGo "github.com/quic-go/quic-go"
+	quicHttp3 "github.com/quic-go/quic-go/http3"
 )
 
 const (
@@ -34,6 +35,7 @@ const (
 )
 
 type NodeRegistrationAgent struct {
+	HTTPMuxer         *http.ServeMux
 	ClientCert        string
 	ClientCertKey     string
 	ServerAddress     string
@@ -236,6 +238,35 @@ func (agent *NodeRegistrationAgent) doRun(ctx context.Context) error {
 			}
 			agent.quicStream = stream
 			agent.reader = stream
+
+			server := &quicHttp3.Server{
+				Handler: agent.HTTPMuxer,
+			}
+			rawServerConn, err := server.NewRawServerConn(agent.quicConn)
+			if err != nil {
+				log.Printf("failed to create raw server connection from quic %p: %v", agent.quicConn.RemoteAddr(), err)
+				return
+			}
+			log.Printf("Created raw server connection from quic %p", agent.quicConn.RemoteAddr())
+
+			go func() {
+				defer log.Printf("QUIC proxy exitting")
+				for {
+					stream, err := agent.quicConn.AcceptStream(ctx)
+					if err != nil {
+						log.Printf("failed to accept QUIC stream from conn %s: %v", agent.quicConn.RemoteAddr(), err)
+						return
+					}
+					log.Printf("Accepted QUIC stream from conn %p", agent.quicConn.RemoteAddr())
+					go func(stream *quicGo.Stream) {
+						defer stream.Close()
+						defer log.Printf("QUIC stream %d of conn %p exitting", stream.StreamID(), agent.quicConn.RemoteAddr())
+
+						log.Printf("Handling request stream %d of conn %p", stream.StreamID(), agent.quicConn.RemoteAddr())
+						rawServerConn.HandleRequestStream(stream)
+					}(stream)
+				}
+			}()
 		} else {
 			c, err := agent.connectWs(tlsConfig)
 			if err != nil {

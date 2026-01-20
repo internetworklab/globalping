@@ -12,10 +12,22 @@ import (
 )
 
 type SimpleRemotePinger struct {
+	NodeName           string
 	Endpoint           string
 	Request            SimplePingRequest
 	ClientTLSConfig    *tls.Config
 	ExtraRequestHeader map[string]string
+	QUICClient         *http.Client
+}
+
+func (sp *SimpleRemotePinger) getDefaultClient() *http.Client {
+	client := &http.Client{}
+	if sp.ClientTLSConfig != nil {
+		client.Transport = &http.Transport{
+			TLSClientConfig: sp.ClientTLSConfig,
+		}
+	}
+	return client
 }
 
 func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
@@ -24,22 +36,30 @@ func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
 	go func() {
 		defer close(evChan)
 
-		urlObj, err := url.Parse(sp.Endpoint)
-		if err != nil {
-			log.Printf("failed to parse endpoint: %v", err)
-			evChan <- PingEvent{Error: err}
-			return
-		}
-		urlObj.RawQuery = sp.Request.ToURLValues().Encode()
-
-		client := &http.Client{}
-		if sp.ClientTLSConfig != nil {
-			client.Transport = &http.Transport{
-				TLSClientConfig: sp.ClientTLSConfig,
+		urlStr := fmt.Sprintf("http://%s/simpleping", sp.NodeName)
+		client := sp.getDefaultClient()
+		if sp.QUICClient != nil {
+			urlObj, err := url.Parse(urlStr)
+			if err != nil {
+				log.Printf("failed to parse endpoint: %v", err)
+				evChan <- PingEvent{Error: err}
+				return
 			}
+			urlObj.RawQuery = sp.Request.ToURLValues().Encode()
+			urlStr = urlObj.String()
+			client = sp.QUICClient
+		} else {
+			urlObj, err := url.Parse(sp.Endpoint)
+			if err != nil {
+				log.Printf("failed to parse endpoint: %v", err)
+				evChan <- PingEvent{Error: err}
+				return
+			}
+			urlObj.RawQuery = sp.Request.ToURLValues().Encode()
+			urlStr = urlObj.String()
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", urlObj.String(), nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 		if err != nil {
 			log.Printf("failed to create request: %v", err)
 			evChan <- PingEvent{Error: err}
@@ -54,7 +74,7 @@ func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Printf("failed to send request: %v", err)
+			log.Printf("failed to send request to %s: %v", urlStr, err)
 			evChan <- PingEvent{Error: err}
 			return
 		}

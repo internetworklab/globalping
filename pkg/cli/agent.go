@@ -518,6 +518,7 @@ func (agentCmd *AgentCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 		attributes[pkgnodereg.AttributeKeyVersion] = string(versionJ)
 
 		agent := pkgnodereg.NodeRegistrationAgent{
+			HTTPMuxer:         muxer,
 			ServerAddress:     agentCmd.ServerAddress,
 			QUICServerAddress: agentCmd.QUICServerAddress,
 			UseQUIC:           agentCmd.QUICServerAddress != "",
