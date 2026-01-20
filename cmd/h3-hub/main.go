@@ -1,17 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
-	"fmt"
-	"io"
 	"log"
 	"net"
 
-	"net/http"
-
 	quicGo "github.com/quic-go/quic-go"
-	quicHttp3 "github.com/quic-go/quic-go/http3"
 )
 
 type MyCtxKey string
@@ -42,64 +38,6 @@ func main() {
 	}
 	log.Printf("Listening on UDP address %s", udpAddr.String())
 
-	server := &quicHttp3.Server{
-		ConnContext: func(ctx context.Context, c *quicGo.Conn) context.Context {
-			ctx = context.WithValue(ctx, MyCtxKeyConn, c)
-			log.Printf("Appended Conn into context: %p", c)
-			return ctx
-		},
-	}
-
-	muxer := http.NewServeMux()
-	muxer.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-
-		conn := ctx.Value(MyCtxKeyConn).(*quicGo.Conn)
-		log.Printf("Conn from context: %p", conn)
-
-		log.Printf("Remote Address From request: %s", r.RemoteAddr)
-
-		if httpStreamer, ok := w.(quicHttp3.HTTPStreamer); ok {
-			log.Printf("HTTPStreamer from writer: %p", httpStreamer)
-			stream := httpStreamer.HTTPStream()
-			log.Printf("HTTPStream from streamer: %p", stream)
-			streamId := stream.StreamID()
-			log.Printf("Stream ID: %d", streamId)
-			defer stream.Close()
-
-			stream.Write([]byte("Hello, World! From stream\n"))
-			stream.Write([]byte("Hello, World! From stream\n"))
-			stream.Write([]byte("Hello, World! From stream"))
-
-			log.Printf("Calling agent's service /test")
-			tr := &quicHttp3.Transport{}
-			rawCliConn := tr.NewRawClientConn(conn)
-			cli := &http.Client{
-				Transport: rawCliConn,
-			}
-			httpReq, err := http.NewRequest("GET", "https://127.0.0.1:18443/test", nil)
-			if err != nil {
-				log.Fatalf("failed to create HTTP request: %v", err)
-			}
-			resp, err := cli.Do(httpReq)
-			if err != nil {
-				log.Fatalf("failed to call agent's service /test: %v", err)
-			}
-			defer resp.Body.Close()
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				log.Fatalf("failed to read response body: %v", err)
-			}
-			log.Printf("Response from agent's service /test: %s", string(body))
-
-			return
-		}
-
-		fmt.Fprintf(w, "Hello, World!")
-	})
-
-	server.Handler = muxer
-
 	for {
 		conn, err := h3Listener.Accept(context.Background())
 		if err != nil {
@@ -107,12 +45,8 @@ func main() {
 		}
 
 		log.Printf("Accepted connection: %p %s", conn, conn.RemoteAddr())
-		rawServerConn, err := server.NewRawServerConn(conn)
-		if err != nil {
-			log.Fatalf("failed to obtain raw server connection: %v", err)
-		}
 
-		go func(conn *quicGo.Conn, rawServerConn *quicHttp3.RawServerConn) {
+		go func(conn *quicGo.Conn) {
 			defer log.Printf("Closing connection: %p %s", conn, conn.RemoteAddr())
 			for {
 				log.Printf("Accepting stream from connection: %p %s", conn, conn.RemoteAddr())
@@ -123,10 +57,23 @@ func main() {
 				}
 				log.Printf("Accepted stream: %p %d from connection: %s", stream, stream.StreamID(), conn.RemoteAddr())
 
-				log.Printf("Handling stream: %p %d from connection: %s", stream, stream.StreamID(), conn.RemoteAddr())
-				rawServerConn.HandleRequestStream(stream)
+				go func(stream *quicGo.Stream) {
+					defer stream.Close()
+					defer log.Printf("Closing stream: %p %d", stream, stream.StreamID())
 
+					for {
+						scanner := bufio.NewScanner(stream)
+						for scanner.Scan() {
+							line := scanner.Text()
+							log.Printf("Received line: %s", line)
+						}
+						if err := scanner.Err(); err != nil {
+							log.Printf("failed to scan stream: %v", err)
+							break
+						}
+					}
+				}(stream)
 			}
-		}(conn, rawServerConn)
+		}(conn)
 	}
 }

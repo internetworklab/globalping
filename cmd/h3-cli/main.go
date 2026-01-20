@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"time"
 
 	"crypto/x509"
-	"io"
 	"net/http"
 	"os"
 
@@ -69,38 +69,21 @@ func main() {
 		}
 	}(quicConn)
 
-	tr := &quicHttp3.Transport{
-		TLSClientConfig: tlsConfig,
-	}
-
-	rawClientConn := tr.NewRawClientConn(quicConn)
-	if rawClientConn == nil {
-		log.Fatalf("failed to create QUIC client connection")
-	}
-
-	log.Printf("Obtained QUIC Raw client connection: %p", rawClientConn)
-
-	cli := &http.Client{
-		Transport: rawClientConn,
-	}
-	log.Printf("Created HTTP client with QUIC transport: %p", cli)
-
-	httpReq, err := http.NewRequest("GET", "https://127.0.0.1:18443/register", nil)
+	heartBeatStream, err := quicConn.OpenStreamSync(ctx)
 	if err != nil {
-		log.Fatalf("failed to create HTTP request: %v", err)
+		log.Fatalf("failed to open heartbeat stream: %v", err)
 	}
-
-	resp, err := cli.Do(httpReq)
-	if err != nil {
-		log.Fatalf("failed to send HTTP request: %v", err)
+	writer := bufio.NewWriter(heartBeatStream)
+	for i := 0; i < 100; i++ {
+		time.Sleep(5 * time.Second)
+		n, err := writer.WriteString("Hello, World! From agent to hub\n")
+		if err != nil {
+			log.Fatalf("failed to write to heartbeat stream: %v", err)
+		}
+		log.Printf("Wrote %d bytes to heartbeat stream", n)
+		err = writer.Flush()
+		if err != nil {
+			log.Fatalf("failed to flush heartbeat stream: %v", err)
+		}
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("failed to read response body: %v", err)
-	}
-
-	log.Printf("Response: %s", string(body))
-
-	time.Sleep(10 * time.Second)
 }

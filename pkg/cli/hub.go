@@ -19,6 +19,7 @@ import (
 	pkgsafemap "example.com/rbmq-demo/pkg/safemap"
 	pkgutils "example.com/rbmq-demo/pkg/utils"
 	"github.com/gorilla/websocket"
+	quicGo "github.com/quic-go/quic-go"
 )
 
 var upgrader = websocket.Upgrader{}
@@ -45,7 +46,8 @@ type HubCmd struct {
 
 	PktCountClamp *int `help:"The maximum number of packets to send for a single ping task"`
 
-	WebSocketTimeout string `help:"The timeout for a WebSocket connection" default:"60s"`
+	WebSocketTimeout  string `help:"The timeout for a WebSocket connection" default:"60s"`
+	QUICListenAddress string `help:"The address to listen on for QUIC" default:"0.0.0.0:18443"`
 }
 
 const defaultWebSocketTimeout = 60 * time.Second
@@ -92,6 +94,40 @@ func (hubCmd HubCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 	if timeout, err := time.ParseDuration(hubCmd.WebSocketTimeout); err == nil && int64(timeout) >= 0 {
 		wsTimeout = timeout
 	}
+
+	certPool, err := x509.SystemCertPool()
+	if err != nil {
+		log.Fatalf("Failed to get system cert pool: %v", err)
+	}
+	// TLSConfig when functioning as a server (i.e. we are the server, while the peer is the client)
+	privateServerSideTLSCfg := &tls.Config{
+		ClientAuth:         tls.RequireAndVerifyClientCert,
+		ClientCAs:          certPool,
+		InsecureSkipVerify: false,
+	}
+	if hubCmd.ServerCert != "" && hubCmd.ServerCertKey != "" {
+		cert, err := tls.LoadX509KeyPair(hubCmd.ServerCert, hubCmd.ServerCertKey)
+		if err != nil {
+			log.Fatalf("Failed to load server certificate: %v", err)
+		}
+		if privateServerSideTLSCfg.Certificates == nil {
+			privateServerSideTLSCfg.Certificates = make([]tls.Certificate, 0)
+		}
+		privateServerSideTLSCfg.Certificates = append(privateServerSideTLSCfg.Certificates, cert)
+		log.Printf("Loaded server certificate: %s and key: %s", hubCmd.ServerCert, hubCmd.ServerCertKey)
+	}
+	if customCAs != nil {
+		privateServerSideTLSCfg.ClientCAs = customCAs
+	}
+
+	quicListener, err := quicGo.ListenAddr(hubCmd.QUICListenAddress, privateServerSideTLSCfg, nil)
+	quicHandler := pkghandler.QUICHandler{
+		Cr:       cr,
+		Timeout:  wsTimeout,
+		Listener: quicListener,
+	}
+	go quicHandler.Serve()
+
 	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr, wsTimeout)
 	connsHandler := pkghandler.NewConnsHandler(cr)
 	var clientTLSConfig *tls.Config = &tls.Config{}
@@ -129,32 +165,6 @@ func (hubCmd HubCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 	muxerPublic.Handle("/conns", connsHandler)
 	muxerPublic.Handle("/ping", pingHandler)
 	muxerPublic.Handle("/version", pkghandler.NewVersionHandler(sharedCtx))
-
-	certPool, err := x509.SystemCertPool()
-	if err != nil {
-		log.Fatalf("Failed to get system cert pool: %v", err)
-	}
-
-	// TLSConfig when functioning as a server (i.e. we are the server, while the peer is the client)
-	privateServerSideTLSCfg := &tls.Config{
-		ClientAuth:         tls.RequireAndVerifyClientCert,
-		ClientCAs:          certPool,
-		InsecureSkipVerify: false,
-	}
-	if hubCmd.ServerCert != "" && hubCmd.ServerCertKey != "" {
-		cert, err := tls.LoadX509KeyPair(hubCmd.ServerCert, hubCmd.ServerCertKey)
-		if err != nil {
-			log.Fatalf("Failed to load server certificate: %v", err)
-		}
-		if privateServerSideTLSCfg.Certificates == nil {
-			privateServerSideTLSCfg.Certificates = make([]tls.Certificate, 0)
-		}
-		privateServerSideTLSCfg.Certificates = append(privateServerSideTLSCfg.Certificates, cert)
-		log.Printf("Loaded server certificate: %s and key: %s", hubCmd.ServerCert, hubCmd.ServerCertKey)
-	}
-	if customCAs != nil {
-		privateServerSideTLSCfg.ClientCAs = customCAs
-	}
 
 	privateServer := http.Server{
 		Handler: pkghandler.NewWithCORSHandler(muxerPrivate),

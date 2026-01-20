@@ -32,12 +32,14 @@ func handleTextMessage(conn *websocket.Conn, cr *pkgconnreg.ConnRegistry, msg []
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal message from %s: %v", conn.RemoteAddr(), err)
 	}
+
+	key := conn.RemoteAddr().String()
 	if payload.Register != nil {
-		cr.Register(conn, *payload.Register)
+		cr.Register(key, *payload.Register)
 	}
 	if payload.Echo != nil {
 		if payload.Echo.Direction == pkgconnreg.EchoDirectionC2S {
-			cr.UpdateHeartbeat(conn)
+			cr.UpdateHeartbeat(key)
 			responsePayload := pkgframing.MessagePayload{
 				Echo: &pkgconnreg.EchoPayload{
 					Direction:       pkgconnreg.EchoDirectionS2C,
@@ -58,7 +60,7 @@ func handleTextMessage(conn *websocket.Conn, cr *pkgconnreg.ConnRegistry, msg []
 		}
 	}
 	if payload.AttributesAnnouncement != nil {
-		cr.SetAttributes(conn, payload.AttributesAnnouncement)
+		cr.SetAttributes(key, payload.AttributesAnnouncement)
 	}
 	return nil
 }
@@ -72,7 +74,8 @@ func (h *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cr.OpenConnection(conn)
+	remoteKey := conn.RemoteAddr().String()
+	cr.OpenConnection(remoteKey)
 	log.Printf("Connection opened for %s, total connections: %d", conn.RemoteAddr(), cr.Count())
 
 	defer func() {
@@ -81,7 +84,7 @@ func (h *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("Failed to close WebSocket connection for %s: %v", conn.RemoteAddr(), err)
 		}
-		cr.CloseConnection(conn)
+		cr.CloseConnection(remoteKey)
 		log.Printf("Connection closed for %s, remaining connections: %d", conn.RemoteAddr(), cr.Count())
 	}()
 

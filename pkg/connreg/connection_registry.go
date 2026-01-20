@@ -8,7 +8,6 @@ import (
 	"time"
 
 	pkgsafemap "example.com/rbmq-demo/pkg/safemap"
-	"github.com/gorilla/websocket"
 )
 
 type RegisterPayload struct {
@@ -50,7 +49,6 @@ type ConnRegistryData struct {
 	ConnectedAt   uint64               `json:"connected_at"`
 	RegisteredAt  *uint64              `json:"registered_at,omitempty"`
 	LastHeartbeat *uint64              `json:"last_heartbeat,omitempty"`
-	WsConn        *websocket.Conn      `json:"-"`
 	Attributes    ConnectionAttributes `json:"attributes,omitempty"`
 }
 
@@ -82,31 +80,28 @@ type ConnRegistry struct {
 	datastore pkgsafemap.DataStore
 }
 
-func (cr *ConnRegistry) OpenConnection(conn *websocket.Conn) {
+func (cr *ConnRegistry) OpenConnection(key string) {
 	now := uint64(time.Now().Unix())
-	key := conn.RemoteAddr().String()
 	connRegData := &ConnRegistryData{
 		ConnectedAt: now,
-		WsConn:      conn,
 		Attributes:  make(ConnectionAttributes),
 	}
 	cr.datastore.Set(key, connRegData)
 }
 
-func (cr *ConnRegistry) CloseConnection(conn *websocket.Conn) {
-	key := conn.RemoteAddr().String()
+func (cr *ConnRegistry) CloseConnection(key string) {
 	cr.datastore.Delete(key)
 }
 
-func (cr *ConnRegistry) Register(conn *websocket.Conn, payload RegisterPayload) error {
-	log.Printf("Registering connection from %s, node name: %s", conn.RemoteAddr(), payload.NodeName)
-	key := conn.RemoteAddr().String()
+func (cr *ConnRegistry) Register(key string, payload RegisterPayload) error {
+	log.Printf("Registering connection from %s, node name: %s", key, payload.NodeName)
+
 
 	_, found := cr.datastore.Get(key, func(valany interface{}) error {
 		entry := valany.(*ConnRegistryData)
 		now := uint64(time.Now().Unix())
 		if entry == nil {
-			return fmt.Errorf("connection from %s not found in registry", conn.RemoteAddr())
+			return fmt.Errorf("connection from %s not found in registry", key)
 		}
 		entry.NodeName = &payload.NodeName
 		entry.RegisteredAt = &now
@@ -114,13 +109,12 @@ func (cr *ConnRegistry) Register(conn *websocket.Conn, payload RegisterPayload) 
 	})
 
 	if !found {
-		return fmt.Errorf("connection from %s not found in registry", conn.RemoteAddr())
+		return fmt.Errorf("connection from %s not found in registry", key)
 	}
 	return nil
 }
 
-func (cr *ConnRegistry) UpdateHeartbeat(conn *websocket.Conn) error {
-	key := conn.RemoteAddr().String()
+func (cr *ConnRegistry) UpdateHeartbeat(key string) error {
 	_, found := cr.datastore.Get(key, func(valany interface{}) error {
 		entry := valany.(*ConnRegistryData)
 		now := uint64(time.Now().Unix())
@@ -130,13 +124,12 @@ func (cr *ConnRegistry) UpdateHeartbeat(conn *websocket.Conn) error {
 	})
 
 	if !found {
-		return fmt.Errorf("connection from %s not found in registry", conn.RemoteAddr())
+		return fmt.Errorf("connection from %s not found in registry", key)
 	}
 	return nil
 }
 
-func (cr *ConnRegistry) SetAttributes(conn *websocket.Conn, announcement *AttributesAnnouncementPayload) error {
-	connkey := conn.RemoteAddr().String()
+func (cr *ConnRegistry) SetAttributes(connkey string, announcement *AttributesAnnouncementPayload) error {
 	_, found := cr.datastore.Get(connkey, func(valany interface{}) error {
 		entry := valany.(*ConnRegistryData)
 		attrs := make(ConnectionAttributes)
@@ -153,7 +146,7 @@ func (cr *ConnRegistry) SetAttributes(conn *websocket.Conn, announcement *Attrib
 		return nil
 	})
 	if !found {
-		return fmt.Errorf("connection from %s not found in registry", conn.RemoteAddr())
+		return fmt.Errorf("connection from %s not found in registry", connkey)
 	}
 	return nil
 }
