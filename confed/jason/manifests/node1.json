@@ -1,0 +1,20 @@
+{
+  "CN": ".node1",
+  "hosts": [
+    "node1.yourdomain.com",
+    "*.yourdomain.com"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "San Francisco",
+      "O": "Internet Widgets, Inc.",
+      "OU": "WWW",
+      "ST": "California"
+    }
+  ]
+}

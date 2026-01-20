@@ -68,7 +68,7 @@ nodename=node1
 # populate the cert manifest template
 jq -n -f ./manifests/peer.json.template \
   --arg cname $nickname.$nodename \
-  --argjson hosts "[\"$nodename.yourdomain.com\"]" \
+  --argjson hosts "[\"$nodename.yourdomain.com\", \"*.yourdomain.com\" ]" \
   > ./manifests/$nodename.json
 
 # generate the cert pair
