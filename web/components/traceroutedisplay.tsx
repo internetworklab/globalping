@@ -619,8 +619,8 @@ export function TracerouteResultDisplay(props: {
             <Box
               sx={{
                 position: "absolute",
-                bottom: 2,
-                right: 2,
+                top: 2,
+                left: 2,
                 fontSize: 12,
                 padding: 2,
               }}

@@ -342,10 +342,10 @@ export function useCanvasSizing(
       if (parent) {
         const parentRect = parent.getBoundingClientRect();
 
-        const realRatio = Math.max(0.3, parentRect.height / parentRect.width);
+        const realRatio = Math.max(0.35, parentRect.height / parentRect.width);
         const croppedCanvasY = canvasW * realRatio;
         const offsetX = 0;
-        const offsetY = Math.max(0, (0.7 * (canvasH - croppedCanvasY)) / 2);
+        const offsetY = Math.max(0, (0.9 * (canvasH - croppedCanvasY)) / 2);
         const projXLen = canvasW;
         const projYLen = croppedCanvasY;
 

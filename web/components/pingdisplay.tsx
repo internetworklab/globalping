@@ -671,7 +671,7 @@ function RowMap(props: {
                   sx={{
                     position: "absolute",
                     bottom: 2,
-                    right: 2,
+                    left: 2,
                     padding: 2,
                     fontSize: 12,
                   }}
