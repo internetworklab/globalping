@@ -26,6 +26,7 @@ services:
       - "./testdata:/usr/share/nginx/html/testdata:ro"
       - "globalping_acme_challenge:/usr/share/nginx/acme-challenge"
       - "globalping_acme_certs:/etc/nginx/acme-certs:ro"
+      - "./public/flags:/usr/share/nginx/html/assets/flags/svg:ro"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
