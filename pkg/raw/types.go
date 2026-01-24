@@ -52,6 +52,7 @@ type ICMPReceiveReply struct {
 	PeerLocation      *string
 	PeerISP           *string
 	PeerExactLocation *pkgipinfo.ExactLocation
+	PeerIPInfo        *pkgipinfo.BasicIPInfo
 }
 
 type GeneralICMPTransceiver interface {

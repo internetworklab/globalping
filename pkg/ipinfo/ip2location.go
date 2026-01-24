@@ -96,6 +96,10 @@ func (ia *IP2LocationIPInfoAdapter) GetIPInfo(ctx context.Context, ip string) (*
 		basicInfo.Country = new(string)
 		*basicInfo.Country = *respObj.CountryName
 	}
+	if respObj.CountryCode != nil && *respObj.CountryCode != "" && *respObj.CountryCode != "-" {
+		basicInfo.ISO3166Alpha2 = new(string)
+		*basicInfo.ISO3166Alpha2 = *respObj.CountryCode
+	}
 	if len(locations) > 0 {
 		basicInfo.Location = strings.Join(locations, ", ")
 	}

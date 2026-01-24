@@ -47,6 +47,7 @@ func (icmpReply *ICMPReceiveReply) ResolveIPInfo(ctx context.Context, ipinfoAdap
 	if ipInfo == nil {
 		return clonedICMPReply, nil
 	}
+	clonedICMPReply.PeerIPInfo = ipInfo
 	if ipInfo.ASN != "" {
 		clonedICMPReply.PeerASN = &ipInfo.ASN
 	}

@@ -10,9 +10,10 @@ import (
 )
 
 type IPInfoLiteResponse struct {
-	ASN     *string `json:"asn,omitempty"`
-	ASName  *string `json:"as_name,omitempty"`
-	Country *string `json:"country,omitempty"`
+	ASN         *string `json:"asn,omitempty"`
+	ASName      *string `json:"as_name,omitempty"`
+	Country     *string `json:"country,omitempty"`
+	CountryCode *string `json:"country_code,omitempty"`
 }
 
 type IPInfoAdapter struct {
@@ -70,6 +71,12 @@ func (ia *IPInfoAdapter) GetIPInfo(ctx context.Context, ip string) (*BasicIPInfo
 	}
 	if respObj.Country != nil && *respObj.Country != "" {
 		basicInfo.Location = *respObj.Country
+		basicInfo.Country = new(string)
+		*basicInfo.Country = *respObj.Country
+	}
+	if respObj.CountryCode != nil && *respObj.CountryCode != "" {
+		basicInfo.ISO3166Alpha2 = new(string)
+		*basicInfo.ISO3166Alpha2 = *respObj.CountryCode
 	}
 
 	return basicInfo, nil

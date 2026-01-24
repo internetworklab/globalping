@@ -54,6 +54,10 @@ func (ia *DN42IPInfoAdapter) GetIPInfo(ctx context.Context, ip string) (*BasicIP
 	if respObj.Country != nil && *respObj.Country != "" {
 		basicInfo.Location = *respObj.Country
 	}
+	if respObj.CountryCode != nil && *respObj.CountryCode != "" && *respObj.CountryCode != "-" {
+		basicInfo.ISO3166Alpha2 = new(string)
+		*basicInfo.ISO3166Alpha2 = *respObj.CountryCode
+	}
 
 	return basicInfo, nil
 }

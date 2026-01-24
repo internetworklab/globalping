@@ -49,6 +49,7 @@ type PacketInfo struct {
 	PeerISP           *string
 	PeerLocation      *string
 	PeerExactLocation *pkgipinfo.ExactLocation
+	PeerIPInfo        *pkgipinfo.BasicIPInfo
 }
 
 func (pktInfo *PacketInfo) ResolveIPInfo(ctx context.Context, ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter) (*PacketInfo, error) {
@@ -67,6 +68,8 @@ func (pktInfo *PacketInfo) ResolveIPInfo(ctx context.Context, ipinfoAdapter pkgi
 	if ipInfo == nil {
 		return clonedPktInfo, nil
 	}
+
+	clonedPktInfo.PeerIPInfo = ipInfo
 
 	if ipInfo.ASN != "" {
 		clonedPktInfo.PeerASN = &ipInfo.ASN
