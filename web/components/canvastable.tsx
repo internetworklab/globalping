@@ -295,7 +295,7 @@ export function CanvasTable(props: {
       <Box
         ref={boxRef}
         sx={{
-          height: "400px",
+          maxHeight: "400px",
           overflow: "auto",
         }}
       >
