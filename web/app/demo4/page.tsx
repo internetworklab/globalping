@@ -1,7 +1,16 @@
 "use client";
 
-import { Box, Button, Dialog, DialogContent, DialogTitle } from "@mui/material";
+import {
+  Box,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  Tooltip,
+} from "@mui/material";
 import { Fragment, useEffect, useRef, useState } from "react";
+import SaveIcon from "@mui/icons-material/Save";
 
 type LineDrawCtx = {
   fillStyle?: CanvasPattern | string | CanvasGradient;
@@ -142,7 +151,7 @@ function carriageReturn(lineCtx: LineDrawCtx): LineDrawCtx {
   };
 }
 
-function Window() {
+function Window(props: { canvasRef: React.RefObject<HTMLCanvasElement> }) {
   const [w, setW] = useState(0);
   const [h, setH] = useState(0);
   const [maxW, setMaxW] = useState(0);
@@ -474,6 +483,8 @@ function Window() {
     setMaxW(maxR);
   });
 
+  const [showDbg, setShowDbg] = useState(false);
+
   return (
     <Fragment>
       <Box
@@ -484,32 +495,36 @@ function Window() {
         }}
       >
         <canvas
+          ref={props.canvasRef}
           style={{ width: "100%", height: "auto" }}
           width={R}
           height={H}
         ></canvas>
       </Box>
-      <Box
-        sx={{
-          paddingTop: 2,
-          paddingLeft: 3,
-          paddingRight: 3,
-          display: "flex",
-          gap: 2,
-          flexWrap: "wrap",
-        }}
-      >
-        <Box>W: {w}</Box>
-        <Box>H: {h}</Box>
-        <Box>MaxW: {maxW.toFixed(0)}</Box>
-        <Box>MaxH: {maxH.toFixed(0)}</Box>
-      </Box>
+      {showDbg && (
+        <Box
+          sx={{
+            paddingTop: 2,
+            paddingLeft: 3,
+            paddingRight: 3,
+            display: "flex",
+            gap: 2,
+            flexWrap: "wrap",
+          }}
+        >
+          <Box>W: {w}</Box>
+          <Box>H: {h}</Box>
+          <Box>MaxW: {maxW.toFixed(0)}</Box>
+          <Box>MaxH: {maxH.toFixed(0)}</Box>
+        </Box>
+      )}
     </Fragment>
   );
 }
 
 export default function Page() {
   const [show, setShow] = useState(true);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   return (
     <Box>
@@ -522,9 +537,49 @@ export default function Page() {
         maxWidth={"md"}
         fullWidth
       >
-        <DialogTitle>Preview</DialogTitle>
-        <DialogContent sx={{ paddingLeft: 0, paddingRight: 0 }}>
-          <Window />
+        <DialogTitle>
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 2,
+            }}
+          >
+            Preview
+            <Tooltip title="Save to disk">
+              <IconButton
+                onClick={() => {
+                  const canvasEle = canvasRef.current;
+                  if (!canvasEle) {
+                    console.error("no canvas element found.");
+                  }
+                  const mimeType = "image/png";
+                  canvasEle!.toBlob((blob) => {
+                    console.log("[dbg] blob:", blob);
+                    if (!blob) {
+                      console.error("cant export canvas to blob");
+                    }
+                    let fname = `trace-${new Date().toISOString()}.png`;
+                    fname = fname.replaceAll(" ", "_");
+                    const f = new File([blob!], fname, { type: mimeType });
+                    const url = URL.createObjectURL(f);
+                    const aEle = window.document.createElement("a");
+                    aEle.setAttribute("href", url);
+                    aEle.setAttribute("download", f.name);
+                    aEle.click();
+                  }, mimeType);
+                }}
+              >
+                <SaveIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        </DialogTitle>
+        <DialogContent
+          sx={{ paddingLeft: 0, paddingRight: 0, paddingBottom: 0 }}
+        >
+          <Window canvasRef={canvasRef as any} />
         </DialogContent>
       </Dialog>
     </Box>
