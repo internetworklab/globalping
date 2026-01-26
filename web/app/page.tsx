@@ -38,6 +38,7 @@ import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
 import { About } from "@/components/about";
 import { DNSProbeDisplay } from "@/components/dnsprobedisplay";
 import TelegramIcon from "@mui/icons-material/Telegram";
+import { testIP } from "@/components/testip";
 
 const fakeSources: SourceOption[] = [
   {
@@ -116,6 +117,14 @@ export default function Home() {
   const [sourcesSelected, setSourcesSelected] = useState<string[]>([]);
 
   const [targetsInput, setTargetsInput] = useState<string>("");
+  const targetAttributes = testIP(targetsInput);
+  const isNeo = targetAttributes.isNeoIP || targetAttributes.isNeoDomain;
+  const isDN42 = targetAttributes.isDN42IP || targetAttributes.isDN42Domain;
+  const targetLabelOverrides = isDN42
+    ? "DN42 Target"
+    : isNeo
+    ? "NeoNetwork Target"
+    : "Target";
 
   const [onGoingTasks, setOnGoingTasks] = useState<PendingTask[]>([]);
 
@@ -541,7 +550,11 @@ export default function Home() {
                       : "Specify a single target"
                   }
                   fullWidth
-                  label={pendingTask.type === "ping" ? "Targets" : "Target"}
+                  label={
+                    pendingTask.type === "ping"
+                      ? "Targets"
+                      : targetLabelOverrides
+                  }
                   value={targetsInput}
                   onChange={(e) => setTargetsInput(e.target.value)}
                 />
