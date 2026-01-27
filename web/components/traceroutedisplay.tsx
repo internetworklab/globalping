@@ -55,6 +55,14 @@ import MapIcon from "@mui/icons-material/Map";
 import { useQuery } from "@tanstack/react-query";
 import { getNodeGroups } from "@/apis/utils";
 import { testIP } from "./testip";
+import {
+  TracerouteReport,
+  TracerouteReportHop,
+  TracerouteReportMode,
+  TracerouteReportPeer,
+  TracerouteReportPreviewDialog,
+} from "@/components/traceroutereport";
+import ShareIcon from "@mui/icons-material/Share";
 
 type TracerouteIPEntry = {
   ip: string;
@@ -97,6 +105,7 @@ type TabState = {
   maxHop: number;
   hopEntries: Record<number, HopEntryState>;
   markers: Marker[];
+  samples: PingSample[];
 };
 type PageState = Record<string, TabState>;
 
@@ -199,11 +208,12 @@ function updateTabState(
   tabState: TabState | undefined | null,
   pingSample: PingSample
 ): TabState {
-  const newTabState = {
+  const newTabState: TabState = {
     ...(tabState ?? {
       maxHop: 1,
       hopEntries: {},
       markers: [],
+      samples: [],
     }),
   };
 
@@ -222,6 +232,12 @@ function updateTabState(
   if (pingSample.lastHop) {
     newTabState.maxHop = pingSample.ttl;
   }
+
+  const numSamples = newTabState.samples.length;
+  newTabState.samples = [
+    ...newTabState.samples,
+    { ...pingSample, sequenceNo: numSamples },
+  ];
 
   return newTabState;
 }
@@ -369,6 +385,117 @@ function updateMarkers(
   return newMarkers;
 }
 
+function swapIJ<T>(arr: T[], i: number, j: number): T[] {
+  const newArr = [...arr];
+  const temp = newArr[i];
+  newArr[i] = newArr[j];
+  newArr[j] = temp;
+  return newArr;
+}
+
+function updateReportPeer(
+  peer: TracerouteReportPeer | undefined,
+  sample: PingSample
+): TracerouteReportPeer {
+  const loc = sample.peerIPInfo
+    ? {
+        city: sample.peerIPInfo.City || "",
+        countryAlpha2: sample.peerIPInfo.ISO3166Alpha2 || "",
+      }
+    : undefined;
+  const isp = sample.peerIPInfo
+    ? {
+        ispName: sample.peerIPInfo.ISP || "",
+        asn: sample.peerIPInfo.ASN || "",
+      }
+    : undefined;
+
+  const lastRTT: number | undefined = sample.latencyMs;
+
+  if (peer === undefined || peer === null) {
+    if (sample.isTimeout) {
+      return {
+        timeout: true,
+        ip: "",
+      };
+    }
+
+    return {
+      rdns: sample.peerRdns,
+      ip: sample.peer || "",
+      loc,
+      isp,
+      rtt:
+        lastRTT !== undefined
+          ? {
+              lastMs: lastRTT,
+              samples: [lastRTT],
+            }
+          : undefined,
+      stat: {
+        sent: 1,
+        replies: sample.isTimeout ? 0 : 1,
+      },
+    };
+  } else {
+    peer = { ...peer };
+
+    if (sample.isTimeout) {
+      // do nothing for timeout sample
+      peer.timeout = true;
+      return peer;
+    }
+
+    if (loc) {
+      peer.loc = loc;
+    }
+    if (isp) {
+      peer.isp = isp;
+    }
+    if (lastRTT !== undefined) {
+      peer.rtt = {
+        ...(peer.rtt || {}),
+        lastMs: lastRTT,
+        samples: [...(peer.rtt?.samples || []), lastRTT],
+      };
+    }
+    peer.stat = {
+      ...(peer.stat || {}),
+      sent: (peer.stat?.sent || 0) + 1,
+      replies: (peer.stat?.replies || 0) + (sample.isTimeout ? 0 : 1),
+    };
+
+    return peer;
+  }
+}
+
+function updateReportHop(
+  hop: TracerouteReportHop,
+  sample: PingSample
+): TracerouteReportHop {
+  hop = { ...hop };
+
+  if (sample.isTimeout) {
+    const peerIdx = hop.peers.findIndex((peer) => !!peer.timeout);
+    if (peerIdx === -1) {
+      hop.peers = [{ timeout: true, ip: "" }, ...hop.peers];
+    } else {
+      hop.peers = swapIJ(hop.peers, peerIdx, 0);
+    }
+  } else if (sample.peer) {
+    const peerIdx = hop.peers.findIndex((peer) => peer.ip === sample.peer);
+    if (peerIdx === -1) {
+      hop.peers = [updateReportPeer(undefined, sample), ...hop.peers];
+    } else {
+      // swapIJ() always create a new array, so it's still immutable.
+      hop.peers = swapIJ(hop.peers, peerIdx, 0);
+      hop.peers[0] = updateReportPeer(hop.peers[peerIdx], sample);
+    }
+  }
+
+  return hop;
+}
+
 function DisplayCurrentNode(props: {
   currentNode: ConnEntry | undefined;
   target: string;
@@ -390,14 +517,7 @@ function DisplayCurrentNode(props: {
     currentNode?.attributes?.[NodeAttrDN42ASN];
   const dn42ISPName: string | undefined =
     currentNode?.attributes?.[NodeAttrDN42ISP];
-  console.log("[dbg] current node info:", {
-    city,
-    countryAlpha2,
-    ispASN,
-    ispName,
-    dn42ISPASN,
-    dn42ISPName,
-  });
+
   if (isNeo || isDN42) {
     return (
       <Box sx={{ padding: 2 }}>
@@ -432,6 +552,114 @@ function DisplayCurrentNode(props: {
   );
 }
 
+function getTracerouteHops(samples: PingSample[]): TracerouteReportHop[] {
+  const samplesByTTL: Record<string, PingSample[]> = {};
+  for (const sample of samples) {
+    const ttl = sample.ttl;
+    if (ttl === undefined || ttl === null || ttl === 0) {
+      continue;
+    }
+    if (sample.sequenceNo === undefined || sample.sequenceNo === null) {
+      continue;
+    }
+    if (!(ttl in samplesByTTL)) {
+      samplesByTTL[ttl] = [];
+    }
+    samplesByTTL[ttl].push(sample);
+  }
+
+  type SamplesGroup = {
+    ttl: number;
+    samples: PingSample[];
+  };
+
+  const samplesGroups: SamplesGroup[] = [];
+
+  for (const key in samplesByTTL) {
+    try {
+      const ttl = parseInt(key);
+      if (Number.isNaN(ttl) || !Number.isFinite(ttl) || ttl <= 0) {
+        continue;
+      }
+      const samples = [...samplesByTTL[key]];
+      samples.sort((a, b) => a.sequenceNo! - b.sequenceNo!);
+      samplesGroups.push({
+        ttl: ttl,
+        samples,
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  samplesGroups.sort((a, b) => a.ttl - b.ttl);
+
+  const hopsData: TracerouteReportHop[] = [];
+
+  for (const samplesGroup of samplesGroups) {
+    let hopData: TracerouteReportHop = {
+      ttl: samplesGroup.ttl,
+      peers: [],
+    };
+
+    for (const sample of samplesGroup.samples) {
+      hopData = updateReportHop(hopData, sample);
+    }
+
+    hopsData.push(hopData);
+  }
+
+  return hopsData;
+}
+
+function buildTracerouteReport(
+  samples: PingSample[],
+  from: ConnEntry,
+  target: string,
+  mode: TracerouteReportMode
+): TracerouteReport {
+  const now = new Date();
+  const targetAttributes = testIP(target);
+  const isNeo = targetAttributes.isNeoIP || targetAttributes.isNeoDomain;
+  const isDN42 = targetAttributes.isDN42IP || targetAttributes.isDN42Domain;
+  const dn42ISP = from?.attributes?.[NodeAttrDN42ISP];
+  const dn42ASN = from?.attributes?.[NodeAttrDN42ASN];
+  const isp = from?.attributes?.[NodeAttrISP];
+  const asn = from?.attributes?.[NodeAttrASN];
+
+  let usedISP = "";
+  let usedASN = "";
+  if (isNeo || isDN42) {
+    usedISP = dn42ISP || "unknown";
+    usedASN = dn42ASN || "unknown";
+  } else {
+    usedISP = isp || "unknown";
+    usedASN = asn || "unknown";
+  }
+
+  const report: TracerouteReport = {
+    date: now.valueOf(),
+    sources: [
+      {
+        nodeName: from.node_name?.toUpperCase() || "unknown",
+        isp: {
+          ispName: usedISP,
+          asn: usedASN,
+        },
+        loc: {
+          city: from?.attributes?.[NodeAttrCityName] || "unknown",
+          countryAlpha2: from?.attributes?.[NodeAttrCountryCode] || "unknown",
+        },
+      },
+    ],
+    destination: target,
+    mode: mode,
+    hops: getTracerouteHops(samples),
+  };
+
+  return report;
+}
+
 export function TracerouteResultDisplay(props: {
   task: PendingTask;
   onDeleted: () => void;
@@ -453,6 +681,8 @@ export function TracerouteResultDisplay(props: {
     null
   );
   const streamRef = useRef<ReadableStream<PingSample> | null>(null);
+
+  const [report, setReport] = useState<TracerouteReport | undefined>(undefined);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -494,7 +724,7 @@ export function TracerouteResultDisplay(props: {
           if (value) {
             pageStateRef.current = updatePageState(pageStateRef.current, value);
 
-            // in StrictMode, this will be called twice per sample
+            // in StrictMode, this (as most React library functions), will be called twice per sample
             setPageState(pageStateRef.current);
 
             readerRef.current?.read().then(readNext as any);
@@ -562,13 +792,13 @@ export function TracerouteResultDisplay(props: {
     }
   }
 
-  let currentNode: ConnEntry | undefined;
-  for (const key in conns) {
-    const connent = conns[key];
-    if (connent.node_name && connent.node_name === tabValue) {
-      currentNode = connent;
-    }
-  }
+  const currentNode: ConnEntry | undefined = Array.from(
+    Object.entries(conns || {})
+  ).find(([_, connent]) => connent.node_name === tabValue)?.[1];
+
+  // console.log("[dbg] currentNode:", currentNode);
+  // console.log("[dbg] tab:", tabValue);
+  // console.log("[dbg] samples:", pageState?.[tabValue]?.samples);
 
   let markers: Marker[] = [];
   let extraPaths: Path[] | undefined = undefined;
@@ -601,6 +831,7 @@ export function TracerouteResultDisplay(props: {
       }
     }
   }
+  const [reportGenerating, setReportGenerating] = useState<boolean>(false);
 
   const worldMapFill: CSSProperties["fill"] = "#676767";
 
@@ -641,6 +872,34 @@ export function TracerouteResultDisplay(props: {
               onClick={() => setShowMap(!showMap)}
             >
               <MapIcon />
+            </IconButton>
+          </Tooltip>
+
+          <Tooltip title="Share Report">
+            <IconButton
+              loading={reportGenerating}
+              onClick={() => {
+                const from = currentNode;
+                const target = task?.targets?.at(0) || "";
+                if (from && target) {
+                  const samples = pageState?.[tabValue]?.samples || [];
+                  setReportGenerating(true);
+                  console.log("[dbg] gen reports, samples:", samples);
+                  new Promise<TracerouteReport>((resolve) => {
+                    const report = buildTracerouteReport(
+                      samples,
+                      from,
+                      target,
+                      !!task?.useUDP ? "udp" : "icmp"
+                    );
+                    resolve(report);
+                  })
+                    .then((report) => setReport(report))
+                    .finally(() => setReportGenerating(false));
+                }
+              }}
+            >
+              <ShareIcon />
             </IconButton>
           </Tooltip>
 
@@ -825,6 +1084,11 @@ export function TracerouteResultDisplay(props: {
           </TableBody>
         </Table>
       </TableContainer>
+      <TracerouteReportPreviewDialog
+        report={report}
+        open={report !== undefined && report !== null}
+        onClose={() => setReport(undefined)}
+      />
     </Card>
   );
 }

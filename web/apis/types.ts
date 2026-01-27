@@ -92,3 +92,23 @@ export type ExactLocation = {
   Longitude: number;
   Latitude: number;
 };
+
+export type BasicIPInfo = {
+  ASN?:      string
+	Location?: string
+	ISP?:      string
+
+	// country is optional,
+	// note, this 'Country' field always means the country name, not the code
+	Country?: string
+
+	// region is optional
+	Region?: string
+	// city is optional
+	City?: string
+	// exact location is optional
+	Exact?: ExactLocation
+
+	// iso3166 alpha2 country code is optional
+	ISO3166Alpha2?: string
+}

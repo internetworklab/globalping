@@ -1,5 +1,5 @@
 import { ISO8601Timestamp } from "./common";
-import { DNSResponse, DNSTarget, ExactLocation } from "./types";
+import { BasicIPInfo, DNSResponse, DNSTarget, ExactLocation } from "./types";
 
 export function getApiEndpoint(): string {
   return (
@@ -127,6 +127,10 @@ export type PingSample = {
   lastHop?: boolean;
 
   pmtu?: number;
+
+  sequenceNo?: number;
+
+  peerIPInfo?: BasicIPInfo;
 };
 
 export function generateFakePingSampleStream(
@@ -197,6 +201,8 @@ type RawPingEventICMPReply = {
   LastHop?: boolean;
 
   SetMTUTo?: number;
+
+  PeerIPInfo?: BasicIPInfo;
 };
 
 type RawTCPPingEventDataDetails = {
@@ -537,6 +543,8 @@ function pingSampleFromEvent(event: RawPingEvent): PingSample | undefined {
     lastHop:
       raws && raws.length > 0 ? raws[raws.length - 1].LastHop : undefined,
     pmtu: raws && raws.length > 0 ? raws[raws.length - 1].SetMTUTo : undefined,
+    peerIPInfo:
+      raws && raws.length > 0 ? raws[raws.length - 1].PeerIPInfo : undefined,
   };
 }
 
