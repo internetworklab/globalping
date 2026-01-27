@@ -14,7 +14,6 @@ import {
   Card,
   Tooltip,
   IconButton,
-  CssBaseline,
 } from "@mui/material";
 import {
   CSSProperties,
@@ -902,7 +901,6 @@ export function TracerouteResultDisplay(props: {
                 if (from && target) {
                   const samples = pageState?.[tabValue]?.samples || [];
                   setReportGenerating(true);
-                  console.log("[dbg] gen reports, samples:", samples);
                   new Promise<TracerouteReport>((resolve) => {
                     const report = buildTracerouteReport(
                       samples,

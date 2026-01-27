@@ -52,6 +52,12 @@ import {
   ZoomHintText,
 } from "./worldmap";
 import { getNodeGroups, NodeGroup } from "@/apis/utils";
+import {
+  PingReport,
+  PingReportPreviewDialog,
+  TracerouteReportMode,
+} from "./traceroutereport";
+import ShareIcon from "@mui/icons-material/Share";
 
 type RowObject = {
   target: string;
@@ -182,6 +188,45 @@ function getLatestDataFromMap(
   };
 }
 
+function buildPingReport(
+  samples: TableCellDataMap,
+  task: PendingTask
+): PingReport {
+  const sources = task.sources;
+  const targets = task.targets;
+  const mode: TracerouteReportMode = !!task?.useUDP
+    ? "udp"
+    : task?.type === "tcpping"
+    ? "tcp"
+    : "icmp";
+
+  const now = new Date();
+
+  const rtts: Record<string, Record<string, number>> = {};
+
+  for (const tgt in samples) {
+    if (!(tgt in rtts)) {
+      rtts[tgt] = {};
+    }
+    for (const src in samples[tgt]) {
+      const rtt = samples[tgt][src]?.latest?.latency;
+      if (rtt !== undefined && rtt !== null) {
+        rtts[tgt][src] = rtt;
+      }
+    }
+  }
+
+  return {
+    date: now.valueOf(),
+    mode,
+    sources,
+    targets,
+    rtts,
+    preferV4: task.preferV4,
+    preferV6: task.preferV6,
+  };
+}
+
 export function PingResultDisplay(props: {
   pendingTask: PendingTask;
   onDeleted: () => void;
@@ -270,6 +315,9 @@ export function PingResultDisplay(props: {
     target: target,
   }));
 
+  const [report, setReport] = useState<PingReport | undefined>(undefined);
+  const [reportGenerating, setReportGenerating] = useState<boolean>(false);
+
   return (
     <Card>
       <Box
@@ -283,6 +331,32 @@ export function PingResultDisplay(props: {
       >
         <Typography variant="h6">Task #{pendingTask.taskId}</Typography>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+          <Tooltip title="Share Report">
+            <IconButton
+              loading={reportGenerating}
+              onClick={() => {
+                if (sources && sources.length > 0) {
+                  if (targets && targets.length > 0) {
+                    setReportGenerating(true);
+                    new Promise<PingReport>((resolve) => {
+                      const report = buildPingReport(
+                        tableCellDataMap,
+                        pendingTask
+                      );
+                      resolve(report);
+                    })
+                      .then((report) => {
+                        setReport(report);
+                      })
+                      .finally(() => setReportGenerating(false));
+                  }
+                }
+              }}
+            >
+              <ShareIcon />
+            </IconButton>
+          </Tooltip>
+
           <PlayPauseButton
             running={running}
             onToggle={(prev, nxt) => {
@@ -327,6 +401,11 @@ export function PingResultDisplay(props: {
           </TableBody>
         </Table>
       </TableContainer>
+      <PingReportPreviewDialog
+        report={report}
+        open={report !== undefined && report !== null}
+        onClose={() => setReport(undefined)}
+      />
     </Card>
   );
 }
