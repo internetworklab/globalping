@@ -607,6 +607,14 @@ function getTracerouteHops(samples: PingSample[]): TracerouteReportHop[] {
     }
 
     hopsData.push(hopData);
+
+    if (
+      samplesGroup.samples.length > 0 &&
+      !!samplesGroup.samples.find((sample) => !!sample.lastHop)
+    ) {
+      // last hop reached, skip all subsequent samples (of higher TTLs)
+      break;
+    }
   }
 
   return hopsData;
