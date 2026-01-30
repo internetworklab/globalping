@@ -40,7 +40,7 @@ const (
 )
 
 type NodeRegistrationAgent struct {
-	HTTPMuxer         *http.ServeMux
+	HTTPMuxer         http.Handler
 	ClientCert        string
 	ClientCertKey     string
 	ServerAddress     string

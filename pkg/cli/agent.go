@@ -24,6 +24,7 @@ import (
 	pkgmyprom "example.com/rbmq-demo/pkg/myprom"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
 	pkgpinger "example.com/rbmq-demo/pkg/pinger"
+	pkgratelimit "example.com/rbmq-demo/pkg/ratelimit"
 	pkgraw "example.com/rbmq-demo/pkg/raw"
 	pkgrouting "example.com/rbmq-demo/pkg/routing"
 	pkgthrottle "example.com/rbmq-demo/pkg/throttle"
@@ -92,6 +93,9 @@ type AgentCmd struct {
 	AgentTickInterval string `help:"The interval between node registration agent's tick" default:"5s"`
 
 	LogEchoReplies bool `help:"Log echo replies" default:"false"`
+
+	SharedOutboundRateLimit                int    `name:"shared-outbound-ratelimit" help:"The shared outbound rate limit in packets per second" default:"100"`
+	SharedOutboundRateLimitRefreshInterval string `name:"shared-outbound-ratelimit-refresh-interval" help:"The refresh interval of the shared outbound rate limit" default:"1s"`
 }
 
 type PingHandler struct {
@@ -281,6 +285,23 @@ func (agentCmd *AgentCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	rlRefreshIntv, err := time.ParseDuration(agentCmd.SharedOutboundRateLimitRefreshInterval)
+	if err != nil {
+		log.Fatalf("failed to parse shared outbound rate limit refresh interval: %v", err)
+	}
+
+	sharedRateLimitPool := &pkgratelimit.MemoryBasedRateLimitPool{
+		RefreshIntv:     rlRefreshIntv,
+		NumTokensPerKey: agentCmd.SharedOutboundRateLimit,
+	}
+
+	sharedRateLimitEnforcer := &pkgratelimit.MemoryBasedRateLimiter{
+		Pool:   sharedRateLimitPool,
+		GetKey: pkgratelimit.GlobalKeyFunc,
+	}
+
+	log.Printf("Using bucket-based token rate limiter, with %d tokens per slot, refreshing every %s", agentCmd.SharedOutboundRateLimit, rlRefreshIntv.String())
+
 	counterStore := pkgmyprom.NewCounterStore()
 	ctx = context.WithValue(ctx, pkgutils.CtxKeyPrometheusCounterStore, counterStore)
 
@@ -384,6 +405,7 @@ func (agentCmd *AgentCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 
 	var muxedHandler http.Handler = muxer
 	muxedHandler = pkgmyprom.WithCounterStoreHandler(muxedHandler, counterStore)
+	muxedHandler = pkgratelimit.WithRatelimiters(muxedHandler, sharedRateLimitPool, sharedRateLimitEnforcer)
 
 	// TLSConfig to apply when acting as a server (i.e. we provide services, peer calls us)
 	serverSideTLSCfg := &tls.Config{
@@ -550,7 +572,7 @@ func (agentCmd *AgentCmd) Run(sharedCtx *pkgutils.GlobalSharedContext) error {
 		attributes[pkgnodereg.AttributeKeyVersion] = string(versionJ)
 
 		agent := pkgnodereg.NodeRegistrationAgent{
-			HTTPMuxer:         muxer,
+			HTTPMuxer:         muxedHandler,
 			ServerAddress:     agentCmd.ServerAddress,
 			QUICServerAddress: agentCmd.QUICServerAddress,
 			UseQUIC:           agentCmd.QUICServerAddress != "",

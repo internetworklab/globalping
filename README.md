@@ -12,6 +12,7 @@ MyGlobalping is a web-based ping & traceroute project, providing easy to use int
 - DN42 Dual Stack support, Internet support
 - Basic IP information display (like ASN, Country, and probably Lat Lon)
 - API-first design, CLI friendly (can access through http clients like `curl`)
+- Prometheus Metrics
 
 ## Build
 
@@ -71,3 +72,8 @@ The APIs of the system are not intended to be called directly by end users; only
 MyGlobalping system is designed to be distributed. There is a hub and many agents. The hub and agents communicate through mTLS-protected channels. An agent doesn't talk to other agents but only to the hub, and the hub only talks to agents. There is only one hub in a cluster.
 
 Take a look at [docs/how-to-join.md](docs/how-to-join.md) for how to join a new agent to a cluster. It's no more complicated than just advertising itself to the hub.
+
+## Todos
+
+- Token-based Authentication
+- Global-wide sending rate limit

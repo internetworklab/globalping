@@ -7,6 +7,10 @@ import (
 
 type KeyFunc func(ctx context.Context, object interface{}) (string, error)
 
+func GlobalKeyFunc(ctx context.Context, object interface{}) (string, error) {
+	return "_", nil
+}
+
 type MemoryBasedRateLimiter struct {
 	Pool   RateLimitPool
 	GetKey KeyFunc
