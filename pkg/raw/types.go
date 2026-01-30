@@ -1,6 +1,7 @@
 package raw
 
 import (
+	"context"
 	"net"
 	"time"
 
@@ -58,6 +59,9 @@ type ICMPReceiveReply struct {
 type GeneralICMPTransceiver interface {
 	GetSender() <-chan chan ICMPSendRequest
 	GetReceiver() <-chan ICMPReceiveReply
+
+	GetIO(ctx context.Context) (chan<- ICMPSendRequest, <-chan ICMPReceiveReply, <-chan error)
+
 	Close() error
 }
 

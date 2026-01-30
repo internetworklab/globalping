@@ -109,9 +109,7 @@ func NewICMP4Transceiver(config ICMP4TransceiverConfig) (*ICMP4Transceiver, erro
 	return tracer, nil
 }
 
-func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
-	errCh := make(chan error, 2)
-
+func (icmp4tr *ICMP4Transceiver) getRawConn() (*ipv4.RawConn, int, error) {
 	traceId := rand.Intn(65536)
 	if icmp4tr.useUDP {
 		traceId = 1024 + rand.Intn(65536-1024)
@@ -129,101 +127,281 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 
 	conn, err := listenConfig.ListenPacket(context.Background(), "ip4:icmp", "0.0.0.0")
 	if err != nil {
-		errCh <- fmt.Errorf("failed to listen on packet:icmp: %v", err)
-		return errCh
+		return nil, 0, fmt.Errorf("failed to listen on packet:icmp: %v", err)
 	}
 
 	// Create a raw IP connection for sending UDP packets
 	rawConn, err := ipv4.NewRawConn(conn)
 	if err != nil {
-		errCh <- fmt.Errorf("failed to create raw connection: %v", err)
-		return errCh
+		return nil, 0, fmt.Errorf("failed to create raw connection: %v", err)
 	}
 
 	if err := rawConn.SetControlMessage(ipv4.FlagTTL|ipv4.FlagSrc|ipv4.FlagDst|ipv4.FlagInterface, true); err != nil {
-		errCh <- fmt.Errorf("failed to set control message: %v", err)
-		return errCh
+		return nil, 0, fmt.Errorf("failed to set control message: %v", err)
 	}
 
-	// launch receiving goroutine
-	// then the context is Done, the sending goroutine will exit, which also close the PacketConn by the way, once the PacketConn is closed,
-	// ReadFrom will result in error, so this receiving goroutine will return as well.
-	// Event chain: context done (or cancel) -> sending goroutine exit -> PacketConn close -> ReadFrom error -> receiving goroutine return
-	go func() {
-		rb := make([]byte, pkgutils.GetMaximumMTU())
-		defer close(icmp4tr.ReceiveC)
+	return rawConn, traceId, nil
+}
+
+func (icmp4tr *ICMP4Transceiver) getPacket(rawConn *ipv4.RawConn, traceId int) (int, *ICMPReceiveReply, error) {
+	rb := make([]byte, pkgutils.GetMaximumMTU())
+	hdr, payload, ctrlMsg, err := rawConn.ReadFrom(rb)
+	if err != nil {
+		if err, ok := err.(net.Error); ok && err.Timeout() {
+			return 0, nil, nil
+		}
+		return 0, nil, fmt.Errorf("failed to read from connection: %v", err)
+	}
+
+	nBytes := hdr.TotalLen
+
+	receivedAt := time.Now()
+	replyObject := ICMPReceiveReply{
+		ID:         traceId,
+		Size:       nBytes,
+		ReceivedAt: receivedAt,
+		Peer:       hdr.Src.String(),
+		TTL:        ctrlMsg.TTL,
+		Seq:        -1, // if can't determine, use -1
+		INetFamily: ipv4.Version,
+	}
+	replyObject.PeerRawIP = &net.IPAddr{IP: hdr.Src}
+
+	pktIdentifier, err := getIDSeqPMTUFromOriginIPPacket4(payload, icmp4tr.udpBasePort)
+	if err != nil {
+		log.Printf("failed to parse ip packet, skipping: %v", err)
+		return 0, nil, nil
+	}
+
+	if pktIdentifier.Id != traceId {
+		return 0, nil, nil
+	}
+
+	replyObject.Seq = pktIdentifier.Seq
+	if pktIdentifier.PMTU != nil {
+		replyObject.SetMTUTo = pktIdentifier.PMTU
+		shrinkTo := *pktIdentifier.PMTU - ipv4.HeaderLen - headerSizeICMP
+		if shrinkTo < 0 {
+			shrinkTo = 0
+		}
+		replyObject.ShrinkICMPPayloadTo = &shrinkTo
+	}
+	// pure icmp packet, with ip header stripped
+	replyObject.Size = nBytes
+	replyObject.IPProto = pktIdentifier.IPProto
+	replyObject.ICMPType = pktIdentifier.ICMPType
+	replyObject.ICMPCode = pktIdentifier.ICMPCode
+	replyObject.LastHop = pktIdentifier.LastHop
+
+	return nBytes, &replyObject, nil
+}
+
+func (icmp4tr *ICMP4Transceiver) getPackets(ctx context.Context, rawConn *ipv4.RawConn, traceId int) (<-chan ICMPReceiveReply, <-chan error) {
+
+	errCh := make(chan error, 1)
+	packetsCh := make(chan ICMPReceiveReply, 1)
+
+	go func(ctx context.Context) {
+		defer close(packetsCh)
+		defer close(errCh)
 
 		for {
-			hdr, payload, ctrlMsg, err := rawConn.ReadFrom(rb)
+			nBytes, pkt, err := icmp4tr.getPacket(rawConn, traceId)
 			if err != nil {
-				if err, ok := err.(net.Error); ok && err.Timeout() {
-					continue
-				}
-				errCh <- fmt.Errorf("failed to read from connection: %v", err)
+				errCh <- err
 				return
 			}
 
-			nBytes := hdr.TotalLen
+			if pkt != nil {
+				packetsCh <- *pkt
 
-			receivedAt := time.Now()
-			replyObject := ICMPReceiveReply{
-				ID:         traceId,
-				Size:       nBytes,
-				ReceivedAt: receivedAt,
-				Peer:       hdr.Src.String(),
-				TTL:        ctrlMsg.TTL,
-				Seq:        -1, // if can't determine, use -1
-				INetFamily: ipv4.Version,
-			}
-			replyObject.PeerRawIP = &net.IPAddr{IP: hdr.Src}
-
-			pktIdentifier, err := getIDSeqPMTUFromOriginIPPacket4(payload, icmp4tr.udpBasePort)
-			if err != nil {
-				log.Printf("failed to parse ip packet, skipping: %v", err)
-				continue
-			}
-
-			if pktIdentifier.Id != traceId {
-				continue
-			}
-
-			replyObject.Seq = pktIdentifier.Seq
-			if pktIdentifier.PMTU != nil {
-				replyObject.SetMTUTo = pktIdentifier.PMTU
-				shrinkTo := *pktIdentifier.PMTU - ipv4.HeaderLen - headerSizeICMP
-				if shrinkTo < 0 {
-					shrinkTo = 0
+				if icmp4tr.onReceived != nil {
+					if err := icmp4tr.onReceived(ctx, nil, pkt, pkt.Peer, nBytes); err != nil {
+						errCh <- fmt.Errorf("failed to call onReceived callback: %v", err)
+						return
+					}
 				}
-				replyObject.ShrinkICMPPayloadTo = &shrinkTo
 			}
-			// pure icmp packet, with ip header stripped
-			replyObject.Size = nBytes
-			replyObject.IPProto = pktIdentifier.IPProto
-			replyObject.ICMPType = pktIdentifier.ICMPType
-			replyObject.ICMPCode = pktIdentifier.ICMPCode
-			replyObject.LastHop = pktIdentifier.LastHop
+		}
+	}(ctx)
 
-			icmp4tr.ReceiveC <- replyObject
-			if icmp4tr.onReceived != nil {
-				if err := icmp4tr.onReceived(ctx, nil, &replyObject, replyObject.Peer, nBytes); err != nil {
-					errCh <- fmt.Errorf("failed to call onReceived callback: %v", err)
+	return packetsCh, errCh
+}
+
+func (icmp4tr *ICMP4Transceiver) sendPacket(ctx context.Context, rawConn *ipv4.RawConn, traceId int, req ICMPSendRequest) error {
+	var wb []byte = nil
+	var err error = nil
+	var ipProtoNum int
+	if icmp4tr.useUDP {
+		ipProtoNum = int(layers.IPProtocolUDP)
+		udpDstPort := icmp4tr.udpBasePort + req.Seq
+
+		udpLayer := &layers.UDP{
+			SrcPort: layers.UDPPort(traceId),
+			DstPort: layers.UDPPort(udpDstPort),
+		}
+
+		payloadData := req.Data
+		maxPayloadLen := GetMaxPayloadLen(ipv4.Version, int(layers.IPProtocolUDP), req.PMTU, req.NexthopMTU)
+		if len(payloadData) > maxPayloadLen {
+			payloadData = payloadData[:maxPayloadLen]
+		}
+
+		udpTotalLen := udpHeaderLen + len(payloadData)
+		udpLayer.Length = uint16(udpTotalLen)
+		if int(udpTotalLen) != int(udpLayer.Length) {
+			log.Printf("udp total length mismatch, the packet will be dropped, expected: %d, got: %d", udpTotalLen, udpLayer.Length)
+			return nil
+		}
+
+		buf := gopacket.NewSerializeBuffer()
+		opts := gopacket.SerializeOptions{}
+		payloadLayer := gopacket.Payload(payloadData)
+		err = payloadLayer.SerializeTo(buf, opts)
+		if err != nil {
+			return fmt.Errorf("failed to serialize payload layer of udp: %v", err)
+		}
+		err = udpLayer.SerializeTo(buf, opts)
+		if err != nil {
+			return fmt.Errorf("failed to serialize udp layer: %v", err)
+		}
+		wb = buf.Bytes()
+	} else {
+		ipProtoNum = int(layers.IPProtocolICMPv4)
+		icmpEcho := &icmp.Echo{
+			ID:   traceId,
+			Seq:  req.Seq,
+			Data: req.Data,
+		}
+		maxPayloadLen := GetMaxPayloadLen(ipv4.Version, int(layers.IPProtocolICMPv4), req.PMTU, req.NexthopMTU)
+		if len(icmpEcho.Data) > maxPayloadLen {
+			icmpEcho.Data = icmpEcho.Data[:maxPayloadLen]
+		}
+		wm := icmp.Message{
+			Type: ipv4.ICMPTypeEcho,
+			Code: 0,
+			Body: icmpEcho,
+		}
+		wb, err = wm.Marshal(nil)
+		if err != nil {
+			return fmt.Errorf("failed to marshal icmp message: %v", err)
+		}
+	}
+
+	iph := &ipv4.Header{
+		Version:  ipv4.Version,
+		Len:      ipv4.HeaderLen,
+		TotalLen: ipv4.HeaderLen + len(wb),
+		TTL:      req.TTL,
+		Flags:    ipv4.DontFragment,
+		Dst:      req.Dst.IP,
+		Protocol: ipProtoNum,
+	}
+
+	var cm *ipv4.ControlMessage = nil
+	if err := rawConn.WriteTo(iph, wb, cm); err != nil && isFatalErr(err) {
+		return fmt.Errorf("failed to write to connection: %v", err)
+	}
+
+	if icmp4tr.onSent != nil {
+		if err := icmp4tr.onSent(ctx, &req, nil, req.Dst.String(), iph.TotalLen); err != nil {
+			return fmt.Errorf("failed to call onSent callback: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func (icmp4tr *ICMP4Transceiver) GetIO(ctx context.Context) (chan<- ICMPSendRequest, <-chan ICMPReceiveReply, <-chan error) {
+	errCh := make(chan error, 2)
+	inC := make(chan ICMPSendRequest)
+	outC := make(chan ICMPReceiveReply)
+
+	rawConn, traceId, err := icmp4tr.getRawConn()
+	if err != nil {
+		errCh <- err
+		return inC, outC, errCh
+	}
+
+	// launch sending goroutine and receiving goroutine
+	// when the context is Done, the sending goroutine will exit, which also close the PacketConn by the way, once the PacketConn is closed,
+	// ReadFrom will result in error, so this receiving goroutine will return as well.
+	// Event chain: context done (or cancel) -> sending goroutine exit -> PacketConn close -> ReadFrom error -> receiving goroutine return
+	go func() {
+		defer rawConn.Close()
+		defer close(outC)
+		defer close(errCh)
+
+		rxPktsC, rxErrCh := icmp4tr.getPackets(ctx, rawConn, traceId)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case rxErr, ok := <-rxErrCh:
+				if ok && rxErr != nil {
+					errCh <- rxErr
+				}
+				return
+			case rxPkt, ok := <-rxPktsC:
+				if !ok {
+					return
+				}
+				icmp4tr.ReceiveC <- rxPkt
+			case <-icmp4tr.closeCh:
+				icmp4tr.closed = true
+				return
+			case req, ok := <-inC:
+				if !ok {
+					return
+				}
+				if err := icmp4tr.sendPacket(ctx, rawConn, traceId, req); err != nil {
+					errCh <- err
 					return
 				}
 			}
 		}
 	}()
 
-	// launch sending goroutine
+	return inC, outC, errCh
+}
+
+func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
+	errCh := make(chan error, 2)
+
+	rawConn, traceId, err := icmp4tr.getRawConn()
+	if err != nil {
+		errCh <- err
+		return errCh
+	}
+
+	// launch sending goroutine and receiving goroutine
+	// when the context is Done, the sending goroutine will exit, which also close the PacketConn by the way, once the PacketConn is closed,
+	// ReadFrom will result in error, so this receiving goroutine will return as well.
+	// Event chain: context done (or cancel) -> sending goroutine exit -> PacketConn close -> ReadFrom error -> receiving goroutine return
 	go func() {
-		defer conn.Close()
 		defer rawConn.Close()
+		defer close(icmp4tr.ReceiveC)
 		defer close(icmp4tr.SendC)
+		defer close(errCh)
+
+		rxPktsC, rxErrCh := icmp4tr.getPackets(ctx, rawConn, traceId)
 
 		for {
 			reqCh := make(chan ICMPSendRequest)
 			select {
 			case <-ctx.Done():
 				return
+			case rxErr, ok := <-rxErrCh:
+				if ok && rxErr != nil {
+					errCh <- rxErr
+				}
+				return
+			case rxPkt, ok := <-rxPktsC:
+				if !ok {
+					return
+				}
+				icmp4tr.ReceiveC <- rxPkt
 			case <-icmp4tr.closeCh:
 				icmp4tr.closed = true
 				return
@@ -233,89 +411,9 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) <-chan error {
 					continue
 				}
 
-				var wb []byte = nil
-				var err error = nil
-				var ipProtoNum int
-				if icmp4tr.useUDP {
-					ipProtoNum = int(layers.IPProtocolUDP)
-					udpDstPort := icmp4tr.udpBasePort + req.Seq
-
-					udpLayer := &layers.UDP{
-						SrcPort: layers.UDPPort(traceId),
-						DstPort: layers.UDPPort(udpDstPort),
-					}
-
-					payloadData := req.Data
-					maxPayloadLen := GetMaxPayloadLen(ipv4.Version, int(layers.IPProtocolUDP), req.PMTU, req.NexthopMTU)
-					if len(payloadData) > maxPayloadLen {
-						payloadData = payloadData[:maxPayloadLen]
-					}
-
-					udpTotalLen := udpHeaderLen + len(payloadData)
-					udpLayer.Length = uint16(udpTotalLen)
-					if int(udpTotalLen) != int(udpLayer.Length) {
-						log.Printf("udp total length mismatch, the packet will be dropped, expected: %d, got: %d", udpTotalLen, udpLayer.Length)
-						continue
-					}
-
-					buf := gopacket.NewSerializeBuffer()
-					opts := gopacket.SerializeOptions{}
-					payloadLayer := gopacket.Payload(payloadData)
-					err = payloadLayer.SerializeTo(buf, opts)
-					if err != nil {
-						errCh <- fmt.Errorf("failed to serialize payload layer of udp: %v", err)
-						return
-					}
-					err = udpLayer.SerializeTo(buf, opts)
-					if err != nil {
-						errCh <- fmt.Errorf("failed to serialize udp layer: %v", err)
-						return
-					}
-					wb = buf.Bytes()
-				} else {
-					ipProtoNum = int(layers.IPProtocolICMPv4)
-					icmpEcho := &icmp.Echo{
-						ID:   traceId,
-						Seq:  req.Seq,
-						Data: req.Data,
-					}
-					maxPayloadLen := GetMaxPayloadLen(ipv4.Version, int(layers.IPProtocolICMPv4), req.PMTU, req.NexthopMTU)
-					if len(icmpEcho.Data) > maxPayloadLen {
-						icmpEcho.Data = icmpEcho.Data[:maxPayloadLen]
-					}
-					wm := icmp.Message{
-						Type: ipv4.ICMPTypeEcho,
-						Code: 0,
-						Body: icmpEcho,
-					}
-					wb, err = wm.Marshal(nil)
-					if err != nil {
-						errCh <- fmt.Errorf("failed to marshal icmp message: %v", err)
-						return
-					}
-				}
-
-				iph := &ipv4.Header{
-					Version:  ipv4.Version,
-					Len:      ipv4.HeaderLen,
-					TotalLen: ipv4.HeaderLen + len(wb),
-					TTL:      req.TTL,
-					Flags:    ipv4.DontFragment,
-					Dst:      req.Dst.IP,
-					Protocol: ipProtoNum,
-				}
-
-				var cm *ipv4.ControlMessage = nil
-				if err := rawConn.WriteTo(iph, wb, cm); err != nil && isFatalErr(err) {
-					errCh <- fmt.Errorf("failed to write to connection: %v", err)
+				if err := icmp4tr.sendPacket(ctx, rawConn, traceId, req); err != nil {
+					errCh <- err
 					return
-				}
-
-				if icmp4tr.onSent != nil {
-					if err := icmp4tr.onSent(ctx, &req, nil, req.Dst.String(), iph.TotalLen); err != nil {
-						errCh <- fmt.Errorf("failed to call onSent callback: %v", err)
-						return
-					}
 				}
 			}
 		}
@@ -641,6 +739,38 @@ func (icmp6tr *ICMP6Transceiver) sendPacket6(ctx context.Context, req ICMPSendRe
 	return nil
 }
 
+func (icmp6tr *ICMP6Transceiver) getPackets6(ctx context.Context, rxIPv6PacketConn *ipv6.PacketConn, traceId int) (<-chan ICMPReceiveReply, <-chan error) {
+	outCh := make(chan ICMPReceiveReply)
+	errCh := make(chan error, 1)
+
+	go func(ctx context.Context) {
+		defer close(outCh)
+		defer close(errCh)
+
+		for {
+
+			replyObject, err := icmp6tr.getPacket6(rxIPv6PacketConn, traceId)
+			if err != nil {
+				// getPacket6 is guaranteed to return non-nil error only when the error is non-recoverable.
+				errCh <- fmt.Errorf("failed to get packet6: %v", err)
+				return
+			}
+
+			if replyObject != nil {
+				outCh <- *replyObject
+				if icmp6tr.onReceived != nil {
+					if err := icmp6tr.onReceived(ctx, nil, replyObject, replyObject.Peer, replyObject.Size); err != nil {
+						errCh <- fmt.Errorf("failed to call onReceived callback: %v", err)
+						return
+					}
+				}
+			}
+		}
+	}(ctx)
+
+	return outCh, errCh
+}
+
 func (icmp6tr *ICMP6Transceiver) GetIO(ctx context.Context) (chan<- ICMPSendRequest, <-chan ICMPReceiveReply, <-chan error) {
 
 	errCh := make(chan error, 2)
@@ -648,6 +778,9 @@ func (icmp6tr *ICMP6Transceiver) GetIO(ctx context.Context) (chan<- ICMPSendRequ
 	receiveC := make(chan ICMPReceiveReply)
 
 	go func(ctx context.Context) {
+		defer close(receiveC)
+		defer close(errCh)
+
 		txIPv6PacketConn, traceId, err := icmp6tr.getSenderAndTraceId()
 		if err != nil {
 			errCh <- fmt.Errorf("failed to obtain sender PacketConn and ipv6PacketConn: %v", err)
@@ -662,35 +795,24 @@ func (icmp6tr *ICMP6Transceiver) GetIO(ctx context.Context) (chan<- ICMPSendRequ
 		}
 		defer rxIPv6PacketConn.Close()
 
-		// launch receiving goroutine
-		go func() {
-			defer close(receiveC)
-
-			for {
-				replyObject, err := icmp6tr.getPacket6(rxIPv6PacketConn, traceId)
-				if err != nil {
-					// getPacket6 is guaranteed to return non-nil error only when the error is non-recoverable.
-					errCh <- fmt.Errorf("failed to get packet6: %v", err)
-					return
-				}
-
-				if replyObject != nil {
-					receiveC <- *replyObject
-					if icmp6tr.onReceived != nil {
-						if err := icmp6tr.onReceived(ctx, nil, replyObject, replyObject.Peer, replyObject.Size); err != nil {
-							errCh <- fmt.Errorf("failed to call onReceived callback: %v", err)
-							return
-						}
-					}
-				}
-			}
-		}()
+		rxCh, rxErrCh := icmp6tr.getPackets6(ctx, rxIPv6PacketConn, traceId)
 
 		// launch sending goroutine
 		for {
+
 			select {
 			case <-ctx.Done():
 				return
+			case rxErr, ok := <-rxErrCh:
+				if ok && rxErr != nil {
+					errCh <- rxErr
+				}
+				return
+			case rxPkt, ok := <-rxCh:
+				if !ok {
+					return
+				}
+				receiveC <- rxPkt
 			case req, ok := <-sendC:
 				if !ok {
 					return

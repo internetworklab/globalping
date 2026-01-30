@@ -76,23 +76,24 @@ func main() {
 
 		ctx := r.Context()
 
-		icmp6tr, err := pkgraw.NewICMP6Transceiver(pkgraw.ICMP6TransceiverConfig{
-			UseUDP:      false,
-			UDPBasePort: nil,
-			OnSent:      nil,
-			OnReceived:  nil,
-		})
-		if err != nil {
-			log.Fatalf("failed to create icmp6 transceiver: %v", err)
-		}
-
-		inCRaw, outC, errC := icmp6tr.GetIO(ctx)
-		inC := rateLimitIO(ctx, inCRaw, globalSharedRL)
-		defer close(inC)
-
 		resolver := net.DefaultResolver
 
-		dstIP, err := resolver.LookupIP(ctx, "ip6", destination)
+		ipVersion := "ip"
+
+		if prefer := r.URL.Query().Get("prefer"); prefer != "" {
+			if prefer == "ipv4" {
+				ipVersion = "ip4"
+			} else if prefer == "ipv6" {
+				ipVersion = "ip6"
+			} else {
+				http.Error(w, "invalid prefer value, must be ipv4 or ipv6", http.StatusBadRequest)
+				return
+			}
+		}
+
+		log.Printf("using ip version: %s", ipVersion)
+
+		dstIP, err := resolver.LookupIP(ctx, ipVersion, destination)
 		if err != nil {
 			log.Fatalf("failed to lookup IP for domain %s: %v", destination, err)
 		}
@@ -101,6 +102,35 @@ func main() {
 		}
 
 		log.Printf("lookup IP for domain %s: %v", destination, dstIP)
+
+		var icmpTr pkgraw.GeneralICMPTransceiver
+		if dstIP[0].To4() != nil {
+			icmp4tr, err := pkgraw.NewICMP4Transceiver(pkgraw.ICMP4TransceiverConfig{
+				UseUDP:      false,
+				UDPBasePort: nil,
+				OnSent:      nil,
+				OnReceived:  nil,
+			})
+			if err != nil {
+				log.Fatalf("failed to create icmp4 transceiver: %v", err)
+			}
+			icmpTr = icmp4tr
+		} else {
+			icmp6tr, err := pkgraw.NewICMP6Transceiver(pkgraw.ICMP6TransceiverConfig{
+				UseUDP:      false,
+				UDPBasePort: nil,
+				OnSent:      nil,
+				OnReceived:  nil,
+			})
+			if err != nil {
+				log.Fatalf("failed to create icmp6 transceiver: %v", err)
+			}
+			icmpTr = icmp6tr
+		}
+
+		inCRaw, outC, errC := icmpTr.GetIO(ctx)
+		inC := rateLimitIO(ctx, inCRaw, globalSharedRL)
+		defer close(inC)
 
 		icmpRequest := pkgraw.ICMPSendRequest{
 			Dst:        net.IPAddr{IP: dstIP[0]},
