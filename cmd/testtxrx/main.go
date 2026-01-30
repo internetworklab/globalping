@@ -1,0 +1,135 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	pkgraw "example.com/rbmq-demo/pkg/raw"
+)
+
+func main() {
+	port := 32306
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{
+		IP:   nil,
+		Port: port,
+	})
+	if err != nil {
+		log.Fatalf("failed to listen on tcp: %v", err)
+	}
+	defer listener.Close()
+	log.Printf("listening on tcp port %d", port)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		destination := r.URL.Query().Get("destination")
+		if destination == "" {
+			http.Error(w, "destination is required", http.StatusBadRequest)
+			return
+		}
+
+		ctx := r.Context()
+
+		icmp6tr, err := pkgraw.NewICMP6Transceiver(pkgraw.ICMP6TransceiverConfig{
+			UseUDP:      false,
+			UDPBasePort: nil,
+			OnSent:      nil,
+			OnReceived:  nil,
+		})
+		if err != nil {
+			log.Fatalf("failed to create icmp6 transceiver: %v", err)
+		}
+
+		inC, outC, errC := icmp6tr.GetIO(ctx)
+
+		go func(ctx context.Context) {
+			defer log.Printf("Exitting receiver goroutine")
+
+			log.Printf("Receiver goroutine is started")
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case err, ok := <-errC:
+					if ok && err != nil {
+						log.Printf("error received: %v", err)
+					}
+					return
+				case reply, ok := <-outC:
+					if ok {
+						if err := json.NewEncoder(w).Encode(reply); err != nil {
+							log.Printf("failed to encode reply: %v", err)
+							return
+						}
+						if flusher, ok := w.(http.Flusher); ok {
+							flusher.Flush()
+						}
+					}
+				}
+			}
+		}(ctx)
+
+		resolver := net.DefaultResolver
+
+		dstIP, err := resolver.LookupIP(ctx, "ip6", destination)
+		if err != nil {
+			log.Fatalf("failed to lookup IP for domain %s: %v", destination, err)
+		}
+		if len(dstIP) == 0 {
+			log.Fatalf("no IP found for domain %s", destination)
+		}
+
+		log.Printf("lookup IP for domain %s: %v", destination, dstIP)
+
+		icmpRequest := pkgraw.ICMPSendRequest{
+			Dst:        net.IPAddr{IP: dstIP[0]},
+			Seq:        1,
+			TTL:        64,
+			Data:       nil,
+			PMTU:       nil,
+			NexthopMTU: 1500,
+		}
+
+		intv, _ := time.ParseDuration("1s")
+		seq := 1
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("context done, no more pings to send")
+				return
+			default:
+				icmpRequest.Seq = seq
+				seq++
+				inC <- icmpRequest
+				log.Printf("sent icmp request to %s, remote: %s", dstIP[0].String(), r.RemoteAddr)
+				<-time.After(intv)
+			}
+		}
+	})
+
+	server := &http.Server{
+		Handler: handler,
+	}
+
+	go func() {
+		log.Printf("starting server on port %d", port)
+		if err := server.Serve(listener); err != nil {
+			if !errors.Is(err, net.ErrClosed) {
+				log.Fatalf("failed to serve: %v", err)
+				return
+			}
+		}
+	}()
+
+	sigsCh := make(chan os.Signal, 1)
+	signal.Notify(sigsCh, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigsCh
+	log.Printf("signal received: %v, exiting...", sig)
+}

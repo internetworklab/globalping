@@ -687,26 +687,21 @@ func (icmp6tr *ICMP6Transceiver) GetIO(ctx context.Context) (chan<- ICMPSendRequ
 		}()
 
 		// launch sending goroutine
-		go func() {
-
-			for {
-				select {
-				case <-ctx.Done():
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case req, ok := <-sendC:
+				if !ok {
 					return
-				case req, ok := <-sendC:
-					if !ok {
-						return
-					}
+				}
 
-					if err := icmp6tr.sendPacket6(ctx, req, txIPv6PacketConn, traceId); err != nil {
-						errCh <- fmt.Errorf("failed to send packet: %v", err)
-						return
-					}
+				if err := icmp6tr.sendPacket6(ctx, req, txIPv6PacketConn, traceId); err != nil {
+					errCh <- fmt.Errorf("failed to send packet: %v", err)
+					return
 				}
 			}
-		}()
-
-		<-ctx.Done()
+		}
 	}(ctx)
 
 	return sendC, receiveC, errCh
