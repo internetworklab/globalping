@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -11,10 +12,34 @@ import (
 	"syscall"
 	"time"
 
+	pkgratelimit "example.com/rbmq-demo/pkg/ratelimit"
 	pkgraw "example.com/rbmq-demo/pkg/raw"
 )
 
+func rateLimitIO(ctx context.Context, inC chan<- pkgraw.ICMPSendRequest, rl pkgratelimit.RateLimiter) chan<- pkgraw.ICMPSendRequest {
+	rlIn, rlOut, _ := rl.GetIO(ctx)
+
+	go func() {
+		for item := range rlOut {
+			inC <- item.(pkgraw.ICMPSendRequest)
+		}
+	}()
+
+	wrappedInC := make(chan pkgraw.ICMPSendRequest)
+	go func() {
+		defer close(rlIn)
+		for item := range wrappedInC {
+			rlIn <- item
+		}
+	}()
+
+	return wrappedInC
+}
+
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	port := 32306
 	listener, err := net.ListenTCP("tcp", &net.TCPAddr{
 		IP:   nil,
@@ -25,6 +50,21 @@ func main() {
 	}
 	defer listener.Close()
 	log.Printf("listening on tcp port %d", port)
+
+	refreshIntv, _ := time.ParseDuration("2s")
+	numTokensPerPeriod := 3
+
+	ratelimitPool := &pkgratelimit.MemoryBasedRateLimitPool{
+		RefreshIntv:     refreshIntv,
+		NumTokensPerKey: numTokensPerPeriod,
+	}
+	ratelimitPool.Run(ctx)
+
+	// since all requests yield the same key, so this is considered as a globally shared rate limiter
+	globalSharedRL := &pkgratelimit.MemoryBasedRateLimiter{
+		Pool:   ratelimitPool,
+		GetKey: pkgratelimit.GlobalKeyFunc,
+	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
@@ -46,7 +86,9 @@ func main() {
 			log.Fatalf("failed to create icmp6 transceiver: %v", err)
 		}
 
-		inC, outC, errC := icmp6tr.GetIO(ctx)
+		inCRaw, outC, errC := icmp6tr.GetIO(ctx)
+		inC := rateLimitIO(ctx, inCRaw, globalSharedRL)
+		defer close(inC)
 
 		resolver := net.DefaultResolver
 
