@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -49,33 +48,6 @@ func main() {
 
 		inC, outC, errC := icmp6tr.GetIO(ctx)
 
-		go func(ctx context.Context) {
-			defer log.Printf("Exitting receiver goroutine")
-
-			log.Printf("Receiver goroutine is started")
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case err, ok := <-errC:
-					if ok && err != nil {
-						log.Printf("error received: %v", err)
-					}
-					return
-				case reply, ok := <-outC:
-					if ok {
-						if err := json.NewEncoder(w).Encode(reply); err != nil {
-							log.Printf("failed to encode reply: %v", err)
-							return
-						}
-						if flusher, ok := w.(http.Flusher); ok {
-							flusher.Flush()
-						}
-					}
-				}
-			}
-		}(ctx)
-
 		resolver := net.DefaultResolver
 
 		dstIP, err := resolver.LookupIP(ctx, "ip6", destination)
@@ -98,18 +70,34 @@ func main() {
 		}
 
 		intv, _ := time.ParseDuration("1s")
+		ticker := time.NewTicker(intv)
+		defer ticker.Stop()
 		seq := 1
 		for {
 			select {
 			case <-ctx.Done():
 				log.Printf("context done, no more pings to send")
 				return
-			default:
+			case err, ok := <-errC:
+				if ok && err != nil {
+					log.Printf("error received: %v", err)
+				}
+				return
+			case reply, ok := <-outC:
+				if ok {
+					if err := json.NewEncoder(w).Encode(reply); err != nil {
+						log.Printf("failed to encode reply: %v", err)
+						return
+					}
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+				}
+			case <-ticker.C:
 				icmpRequest.Seq = seq
 				seq++
 				inC <- icmpRequest
 				log.Printf("sent icmp request to %s, remote: %s", dstIP[0].String(), r.RemoteAddr)
-				<-time.After(intv)
 			}
 		}
 	})
