@@ -49,6 +49,7 @@ type SimplePinger struct {
 	RespondRange  []net.IPNet
 	OnSent        pkgraw.ICMPTransceiverHook
 	OnReceived    pkgraw.ICMPTransceiverHook
+	RateLimiter   pkgratelimit.RateLimiter
 }
 
 func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
@@ -267,14 +268,10 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			}
 		}()
 
-		ratelimiterAny := ctx.Value(pkgutils.CtxKeySharedRateLimitEnforcer)
-
 		inRawC, outC, errC := transceiver.GetIO(ctx)
 		inC := inRawC
-		if ratelimiterAny != nil {
-			if ratelimiter, ok := ratelimiterAny.(pkgratelimit.RateLimiter); ok && ratelimiter != nil {
-				inC = rateLimitIO(ctx, inRawC, ratelimiter)
-			}
+		if ratelimiter := sp.RateLimiter; ratelimiter != nil {
+			inC = rateLimitIO(ctx, inRawC, ratelimiter)
 		}
 
 		go func() {

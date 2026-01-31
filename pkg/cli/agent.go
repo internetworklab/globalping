@@ -172,6 +172,15 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	ctx := r.Context()
+	var rateLimiterUsed pkgratelimit.RateLimiter = nil
+	if rateLimitAny := ctx.Value(pkgutils.CtxKeySharedRateLimitEnforcer); rateLimitAny != nil {
+		rateLimit, ok := rateLimitAny.(pkgratelimit.RateLimiter)
+		if ok && rateLimit != nil {
+			rateLimiterUsed = rateLimit
+		}
+	}
+
 	var pinger pkgpinger.Pinger = nil
 	if pingRequest.L7PacketType != nil && *pingRequest.L7PacketType == pkgpinger.L7ProtoDNS {
 		dnsServers := make([]string, 0)
@@ -196,7 +205,8 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		commonLabels[pkgmyprom.PromLabelTarget] = strings.Join(dnsServers, ",")
 
 		pinger = &pkgpinger.DNSPinger{
-			Requests: pingRequest.DNSTargets,
+			Requests:    pingRequest.DNSTargets,
+			RateLimiter: rateLimiterUsed,
 		}
 	} else if pingRequest.L4PacketType != nil && *pingRequest.L4PacketType == pkgpinger.L4ProtoTCP {
 		tcpingPinger := &pkgpinger.TCPSYNPinger{
@@ -209,7 +219,9 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			OnReceived: func(ctx context.Context, srcIP net.IP, srcPort int, dstIP net.IP, dstPort int, nBytes int) {
 				counterStore.NumBytesReceived.With(commonLabels).Add(float64(nBytes))
 			},
+			RateLimiter: rateLimiterUsed,
 		}
+
 		pinger = tcpingPinger
 	} else {
 		icmpOrUDPPinger := &pkgpinger.SimplePinger{
@@ -224,11 +236,11 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				counterStore.NumBytesReceived.With(commonLabels).Add(float64(nBytes))
 				return nil
 			},
+			RateLimiter: rateLimiterUsed,
 		}
 		pinger = icmpOrUDPPinger
 	}
 
-	ctx := r.Context()
 	ctx = context.WithValue(ctx, pkgutils.CtxKeyPromCommonLabels, commonLabels)
 	for ev := range pinger.Ping(ctx) {
 		if ev.Error != nil {

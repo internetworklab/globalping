@@ -22,6 +22,7 @@ type TCPSYNPinger struct {
 	OnReceived    pkgtcping.TCPSYNSenderHook
 	RespondRange  []net.IPNet
 	IPInfoAdapter pkgipinfo.GeneralIPInfoAdapter
+	RateLimiter   pkgratelimit.RateLimiter
 }
 
 func throttleTicker(ctx context.Context, src <-chan time.Time, rateLimit pkgratelimit.RateLimiter) <-chan time.Time {
@@ -156,11 +157,8 @@ func (pinger *TCPSYNPinger) Ping(ctx context.Context) <-chan PingEvent {
 		ticker := time.NewTicker(time.Duration(intvMs) * time.Millisecond)
 		tick := ticker.C
 		go func(ctx context.Context) {
-			if rateLimitAny := ctx.Value(pkgutils.CtxKeySharedRateLimitEnforcer); rateLimitAny != nil {
-				rateLimit, ok := rateLimitAny.(pkgratelimit.RateLimiter)
-				if ok && rateLimit != nil {
-					tick = throttleTicker(ctx, ticker.C, rateLimit)
-				}
+			if pinger.RateLimiter != nil {
+				tick = throttleTicker(ctx, ticker.C, pinger.RateLimiter)
 			}
 		}(ctx)
 
