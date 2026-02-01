@@ -8,6 +8,8 @@ const (
 	CtxKeyStartedAt               = CtxKey("started_at")
 	CtxKeySharedRateLimitEnforcer = CtxKey("shared_rate_limit_enforcer")
 	CtxKeySharedRateLimitPool     = CtxKey("shared_rate_limit_pool")
+	CtxKeyJWTSecret               = CtxKey("jwt_secret")
+	CtxKeyJWTToken                = CtxKey("jwt_token")
 )
 
 type GlobalSharedContext struct {
